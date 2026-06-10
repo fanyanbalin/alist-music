@@ -2,7 +2,7 @@ const BASE_URL = '/alist-music/';
 
 const CACHE_VERSION = 'dmusic-static-v2';
 const STATIC_ASSETS = [
-    BASE_URL， 
+    BASE_URL,
     `${BASE_URL}index.html`,
     `${BASE_URL}alist.js`,    
     `${BASE_URL}manifest.json`,
