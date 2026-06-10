@@ -29,7 +29,7 @@ self.addEventListener('activate', function(event) {
 	]));
 });
 
-self。addEventListener('fetch', function(event) {
+self.addEventListener('fetch', function(event) {
     if (event.request.method !== 'GET') return;
     
     const requestUrl = new URL(event.request.url);
