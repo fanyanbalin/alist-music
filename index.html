@@ -3689,14 +3689,12 @@
 			}).mount('#app');
 
 			if (/^(https?:)$/.test(location.protocol) && 'serviceWorker' in navigator) {
-				window.addEventListener('load', () => {
-					navigator.serviceWorker.register('./sw.js')
-						。then(function(e) {
-							console.log('[SW-DMUSIC] Service Worker success:', e)
-						})
-						。catch(function(e) {
-							console.log('[SW-DMUSIC] Service Worker failed:', e)
-						});
+				window.addEventListener('load', function() {
+					navigator.serviceWorker.register('./sw.js').then(function(e) {
+						console.log('[SW-DMUSIC] Service Worker success:', e);
+					}).catch(function(e) {
+						console.log('[SW-DMUSIC] Service Worker failed:', e);
+					});
 				});
 			}
 		</script>
