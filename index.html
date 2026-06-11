@@ -3254,10 +3254,10 @@
 			if (/^(https?:)$/.test(location.protocol) && 'serviceWorker' in navigator) {
 				window.addEventListener('load', () => {
 					navigator.serviceWorker.register('./sw.js')
-						。then(function(e) {
+						.then(function(e) {
 							console.log('[SW-DMUSIC] Service Worker success:', e)
 						})
-						。catch(function(e) {
+						.catch(function(e) {
 							console.log('[SW-DMUSIC] Service Worker failed:', e)
 						});
 				});
