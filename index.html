@@ -12,6 +12,12 @@
 		<link rel="apple-touch-icon" href="favicon.ico" />
 		<link href="https://mirrors.sustech.edu.cn/cdnjs/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
 		<script>
+			// 必须在任何渲染之前执行，避免 Edge DevTools 下首帧 GPU 竞争导致鼠标卡顿
+			if (/Edg\//.test(navigator.userAgent)) {
+				document.documentElement.classList.add('edge-perf');
+			}
+		</script>
+		<script>
 			(function() {
 				const supportsPwa = /^(https?:)$/.test(location.protocol);
 				if (supportsPwa) {
@@ -94,28 +100,44 @@
 				}
 			}
 
-			/* Edge/性能模式：禁用高开销CSS效果 */
-			html.edge-perf .bg-animation {
-				animation-duration: 60s;
+			/* Edge/性能模式：彻底禁用高开销CSS效果，消除DevTools下鼠标卡顿 */
+			html.edge-perf .bg-animation,
+			html.edge-perf .full-bg,
+			html.edge-perf .current-cover.playing,
+			html.edge-perf .lyric-line.active,
+			html.edge-perf .lyric-line.active::before,
+			html.edge-perf .loading i {
+				animation: none !important;
 			}
 			html.edge-perf .bg-overlay,
 			html.edge-perf .wrap-box,
 			html.edge-perf .navbar,
-			html.edge-perf .full-mask {
-				backdrop-filter: none;
+			html.edge-perf .full-mask,
+			html.edge-perf .search-input,
+			html.edge-perf .full-playlist-backdrop,
+			html.edge-perf .full-playlist-panel,
+			html.edge-perf .full-volume-panel {
+				backdrop-filter: none !important;
+				filter: none !important;
 			}
 			html.edge-perf .full-bg {
-				filter: brightness(0.46);
-				animation: none;
+				filter: none !important;
+				transform: none !important;
+				background: rgba(0, 0, 0, 0.5) !important;
+			}
+			html.edge-perf .full-mask {
+				background: rgba(0, 0, 0, 0.7) !important;
+			}
+			html.edge-perf .lyric-line:not(.active),
+			html.edge-perf .lyric-line:not(.active):hover {
+				filter: none !important;
+			}
+			html.edge-perf .lyric-line.active {
+				filter: none !important;
+				box-shadow: none !important;
 			}
 			html.edge-perf .song-item:hover {
-				transform: none;
-			}
-			html.edge-perf .song-item.active {
-				transform: translateX(4px);
-			}
-			html.edge-perf .current-cover.playing {
-				animation: rotate 20s linear infinite;
+				transform: none !important;
 			}
 
 			.hide {
@@ -643,6 +665,7 @@
 				overflow: hidden;
 				display: flex;
 				flex-direction: column;
+				contain: layout style paint;
 			}
 
 			.lyrics-section {
@@ -2326,11 +2349,12 @@
 					return null;
 				}
 			};
-			window.getSongLyric = async function(song) {
-				const key = `${song.source}_${song.id}`;
+			window.getSongLyric = async function(song, specificSource) {
+				const key = `${song.source}_${song.id}${specificSource ? '_' + specificSource : ''}`;
 				if (songAssetCache.lyric[key]) return songAssetCache.lyric[key];
 				if (!songAssetCache.lyricReq[key]) {
-					songAssetCache.lyricReq[key] = requestMusicApi('lyric', song.source, {
+					const targetSource = specificSource || song.source;
+					const req = requestMusicApi('lyric', targetSource, {
 						id: song.lyric_id || song.id
 					}, {
 						timeout: 10000,
@@ -2343,7 +2367,7 @@
 							return lyric;
 						}
 						// Netease主接口返回空歌词时尝试备用接口
-						if (song.source === 'netease') {
+						if (targetSource === 'netease') {
 							const backupId = song.lyric_id || song.id;
 							return fetchNeteaseBackupLyric(backupId).then(backupLyric => {
 								if (backupLyric) songAssetCache.lyric[key] = backupLyric;
@@ -2357,7 +2381,7 @@
 						delete songAssetCache.lyricReq[key];
 						console.error(e);
 						// Netease异常时也尝试备用接口
-						if (song.source === 'netease') {
+						if (targetSource === 'netease') {
 							const backupId = song.lyric_id || song.id;
 							return fetchNeteaseBackupLyric(backupId).then(backupLyric => {
 								if (backupLyric) songAssetCache.lyric[key] = backupLyric;
@@ -2366,6 +2390,7 @@
 						}
 						return null;
 					});
+					songAssetCache.lyricReq[key] = req;
 				}
 				return songAssetCache.lyricReq[key];
 			}
@@ -2695,10 +2720,15 @@
 						if (!this._stallTimer) {
 							this._stallTimer = setTimeout(() => {
 								this._stallTimer = null;
-								if (this.isPlaying && this.$refs.audioPlayer.paused) {
+								if (this.isPlaying && this.$refs.audioPlayer.paused && this.$refs.audioPlayer.src) {
 									this.$refs.audioPlayer.play().catch(() => {
-										this.showNotification('音频缓冲超时，尝试重新加载', 'warning');
-										this.reloadCurrentSong(true);
+										// 防止循环重试：记录该URL已失败，避免重复reload
+										const src = this.$refs.audioPlayer.src;
+										if (src && this._lastStalledSrc !== src) {
+											this._lastStalledSrc = src;
+											this.showNotification('音频缓冲超时，尝试重新加载', 'warning');
+											this.reloadCurrentSong(true);
+										}
 									});
 								}
 							}, 5000);
@@ -2772,7 +2802,7 @@
 						const key = `${song.source}_${song.id}`;
 						getAlbumCoverUrl(song).catch(() => {});
 						if (this.lyricHistory[key]) return;
-						getSongLyric(song, null, true).then(lyric => {
+						getSongLyric(song).then(lyric => {
 							if (!lyric || this.lyricHistory[key]) return;
 							this.lyricHistory[key] = lyric;
 							setStorage(cacheKey.lyricHistory, this.lyricHistory);
@@ -2792,6 +2822,7 @@
 						let key = `${song.source}_${song.id}`
 						if (this.currentSong.key === key && !isForce) return;
 						this.endingSong = false;
+						this._pendingResume = null; // 清除上一首歌的残留 resume 状态
 						setStorageExp(cacheKey.currInd, ind);
 						// 更新当前歌曲信息
 						const displayInfo = this.parseSongDisplayInfo(song);
@@ -2828,6 +2859,10 @@
 								this._lyricLoadToken = (this._lyricLoadToken || 0) + 1; // 取消正在进行的歌词请求
 								return this.showNotification('无法获取音乐链接，请尝试其他歌曲或更换音质', 'error');
 							}
+						// 统一处理 HTTPS 升级，防止 Mixed Content 警告（含缓存恢复的场景）
+						if (location.protocol === 'https:' && /^http:/.test(songUrl)) {
+							songUrl = songUrl.replace(/^http:/, 'https:');
+						}
 						this.$refs.audioPlayer.src = songUrl;
 						this.historyTime = time
 						this.progress = 0;
@@ -2845,7 +2880,7 @@
 							// 自动播放
 							if (!this.historyTime && !suppressAutoPlay) this.$refs.audioPlayer.play().then(() => {
 								if (this._playSongToken !== playToken || this.currentSong.key !== key) return;
-								this.showNotification(`开始播放 ${song.artist} - ${song.name}`, 'success');
+								this.showNotification(`开始播放 ${artistText} · ${displayInfo.title}`, 'success');
 							}).catch((e) => {
 								if (this._playSongToken !== playToken || this.currentSong.key !== key) return;
 								console.error('play error', e);
@@ -3092,10 +3127,14 @@
 							const lineOffsetTop = activeLine.offsetTop;
 
 							const targetScrollTop = Math.max(0, lineOffsetTop - containerHeight / 2 + lineHeight / 2);
+							// Edge 下跳过 rAF 平滑滚动，减少 DevTools 打开时的渲染冲突
+							if (this.lyricSwitching || /Edg\//.test(navigator.userAgent)) {
+								container.scrollTop = targetScrollTop;
+								return;
+							}
 							const currentScroll = container.scrollTop;
 							const distance = Math.abs(targetScrollTop - currentScroll);
-
-							if (this.lyricSwitching || distance < 2) {
+							if (distance < 2) {
 								container.scrollTop = targetScrollTop;
 							} else {
 								if (this.scrollRaf) cancelAnimationFrame(this.scrollRaf);
@@ -3136,10 +3175,14 @@
 							if (!songUrl) {
 								return this.showNotification('无法获取音乐链接，请尝试其他歌曲或更换音质', 'error');
 							}
+							if (location.protocol === 'https:' && /^http:/.test(songUrl)) {
+								songUrl = songUrl.replace(/^http:/, 'https:');
+							}
+							const dlInfo = this.parseSongDisplayInfo(song);
 							const link = Object.assign(document.createElement('a'), {
 								href: songUrl,
 								target: '_blank',
-								download: `${song.name} - ${Array.isArray(song.artist) ? song.artist.join(', ') : song.artist}.mp3`,
+								download: `${dlInfo.artist ? dlInfo.artist + ' - ' : ''}${dlInfo.title}.mp3`,
 							})
 							document.body.appendChild(link);
 							link.click();
@@ -3167,9 +3210,10 @@
 								this.showNotification('无法获取歌词', 'error');
 								return;
 							}
+							const dlInfo = this.parseSongDisplayInfo(song);
 							downloadText(lyricContent,
-								`${Array.isArray(song.artist) ? song.artist.join(', ') : song.artist} - ${song.name}.lrc`
-							)
+							`${dlInfo.artist ? dlInfo.artist + ' - ' : ''}${dlInfo.title}.lrc`
+						)
 							this.showNotification('歌词下载完成', 'success');
 
 						} catch (error) {
@@ -3268,10 +3312,6 @@
 					}
 				},
 				async mounted() {
-					// Edge 浏览器性能优化：自动启用简化视觉效果
-					if (/Edg\//.test(navigator.userAgent)) {
-						document.documentElement.classList.add('edge-perf');
-					}
 					this.setVolume(this.volume);
 					document.addEventListener('keydown', this.handleKeyDown);
 					this.searchHistory = await getStorage(cacheKey.searchHistory) || {}
@@ -3298,7 +3338,7 @@
 				},
 			}).mount('#app');
 
-			if (/^(https?:)$/.test(location.protocol) && 'serviceWorker' in navigator) {
+			if (/^(https?:)$/.test(location.protocol) && 'serviceWorker' in navigator && !/Edg\//.test(navigator.userAgent)) {
 				window.addEventListener('load', () => {
 					navigator.serviceWorker.register('./sw.js')
 						.then(function(e) {
