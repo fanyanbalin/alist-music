@@ -216,7 +216,7 @@ if (isAList) {
 			}
 			return url;
 		} catch (e) {
-			console.error(e);
+			console.debug(e);
 			return null;
 		}
 	}
@@ -249,75 +249,14 @@ if (isAList) {
 		}
 	};
 	window.getSongLyric = async function(song, specificSource, silent) {
-		const key = `${song.source}_${song.id}_${song.lyric ? 'local' : (specificSource || 'auto')}`;
+		const key = `${song.source}_${song.id}_${song.lyric ? 'local' : 'none'}`;
 		if (songAssetCache.lyric[key]) return songAssetCache.lyric[key];
 		if (songAssetCache.lyricReq[key]) return songAssetCache.lyricReq[key];
+		// 没有本地 LRC 文件，直接返回 null（不请求远程 API）
+		if (!song.lyric) return null;
 		songAssetCache.lyricReq[key] = (async function() {
 		try {
-			if (!song.lyric) {
-				// 尝试请求远端歌词接口
-				const sources = specificSource ? [specificSource] : ['netease', 'kuwo', 'tencent', 'kugou'];
-				const fetchJson = (url, timeout = 8000) => Promise.race([
-					fetch(url).then(res => res.json()),
-					new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), timeout))
-				]);
-				for (const source of sources) {
-					try {
-						!silent && showNotification(`正在获取歌词：${source}`, 'info');
-						let results = await fetchJson(
-							`${API_BASE}?types=search&source=${source}&name=${encodeURIComponent(getFileName(song.name))}&count=5`
-						) || [];
-						if (!results.length) continue;
-						const lyrics = await Promise.all(results.map(async item => {
-							const id = item.lyric_id || item.id;
-							if (!id) return null;
-							try {
-								return (await fetchJson(
-									`${API_BASE}?types=lyric&source=${source}&id=${encodeURIComponent(id)}`
-								) || {}).lyric;
-							} catch (e) {
-								return null;
-							}
-						}));
-						const lyric = lyrics.find(Boolean);
-						if (lyric) {
-							songAssetCache.lyric[key] = lyric;
-							return lyric;
-						}
-						// Netease主接口失败时尝试备用接口
-						if (source === 'netease' && results.length > 0) {
-							const firstId = results[0].lyric_id || results[0].id;
-							if (firstId) {
-								!silent && showNotification('主接口失败，尝试备用接口获取歌词...', 'info');
-								const backupLyric = await fetchNeteaseBackupLyric(firstId);
-								if (backupLyric) {
-									songAssetCache.lyric[key] = backupLyric;
-									return backupLyric;
-								}
-							}
-						}
-					} catch (e) {
-						console.warn('获取歌词失败:', source, e);
-						// Netease异常时也尝试备用接口
-						if (source === 'netease') {
-							const searchId = song.lyric_id || song.id;
-							if (searchId) {
-								!silent && showNotification('主接口异常，尝试备用接口获取歌词...', 'info');
-								const backupLyric = await fetchNeteaseBackupLyric(searchId);
-								if (backupLyric) {
-									songAssetCache.lyric[key] = backupLyric;
-									return backupLyric;
-								}
-							}
-						}
-					}
-				}
-				!silent && showNotification('歌词获取失败，可尝试手动刷新', 'warning');
-				return null;
-			}
-			const {
-				data
-			} = await AList.getFileInfo(song.lyric);
+			const { data } = await AList.getFileInfo(song.lyric);
 			if (!data.raw_url) return null;
 			const lyric = await AList.getRawFile(song.lyric, {
 				sign: data.sign,
@@ -326,7 +265,7 @@ if (isAList) {
 			if (lyric) songAssetCache.lyric[key] = lyric;
 			return lyric;
 		} catch (e) {
-			console.error(e);
+			console.debug(e);
 			return null;
 		} finally {
 			delete songAssetCache.lyricReq[key];
@@ -522,3 +461,13 @@ async function downloadList() {
 		return null;
 	}
 }
+// 从LRC文本中提取最后一句的时间戳(秒)，用于匹配歌曲时长
+window.getLastLyricTimestamp = function(lrcText) {
+	if (!lrcText) return -1;
+	const lines = lrcText.split('\n');
+	for (let i = lines.length - 1; i >= 0; i--) {
+		const match = lines[i].match(/\[(\d{2}):(\d{2})\.(\d{2,3})\]/);
+		if (match) return parseInt(match[1]) * 60 + parseInt(match[2]) + parseInt(match[3]) / (match[3].length === 3 ? 1000 : 100);
+	}
+	return -1;
+};
