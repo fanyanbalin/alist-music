@@ -64,23 +64,44 @@ setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function showNotification(message, type = 'info', duration = 2) {
-	// 移除旧通知，防止重叠
-	const old = document.querySelector('.gd-notification');
-	if (old) old.remove();
-	const bgcolor = type === 'success' ? 'rgba(76, 175, 80, 0.9)' : type === 'error' ? 'rgba(244, 67, 54, 0.9)' :
-		type === 'warning' ? 'rgba(255, 152, 0, 0.9)' : 'rgba(33, 150, 243, 0.9)'
+	// 确保有通知容器
+	let container = document.querySelector('.gd-notify-container');
+	if (!container) {
+		container = Object.assign(document.createElement('div'), {
+			className: 'gd-notify-container',
+		});
+		container.style.cssText = 'position:fixed;top:160px;right:30px;z-index:1000;display:flex;flex-direction:column;gap:8px;pointer-events:none;';
+		document.body.appendChild(container);
+	}
+	// 限制最多3条，超出移除最旧的
+	const existing = container.querySelectorAll('.gd-notification');
+	if (existing.length >= 3) {
+		existing[0].style.opacity = '0';
+		existing[0].style.transform = 'translateX(400px)';
+		setTimeout(() => { if (existing[0].parentNode) existing[0].remove(); }, 300);
+	}
+	const bgcolor = type === 'success' ? 'rgba(76, 175, 80, 0.92)' : type === 'error' ? 'rgba(244, 67, 54, 0.92)' :
+		type === 'warning' ? 'rgba(255, 152, 0, 0.92)' : 'rgba(33, 150, 243, 0.92)';
+	const icon = type === 'success' ? '\u2714 ' : type === 'error' ? '\u2716 ' : type === 'warning' ? '\u26A0 ' : '\u2139 ';
 	const notification = Object.assign(document.createElement('div'), {
 		className: 'gd-notification',
-		textContent: message,
-		style: `background: ${bgcolor}; position: fixed; top: 160px; right: 30px; color: white; padding: 15px 20px; border-radius: 10px; font-size: 14px;
-          backdrop-filter: blur(10px); box-shadow: 0 8px 25px rgba(0,0,0,0.3); z-index: 1000; transform: translateX(400px); transition: transform 0.3s ease; max-width: 300px; `,
+		textContent: icon + message,
+		style: `background:${bgcolor};color:#fff;padding:12px 18px;border-radius:10px;font-size:14px;` +
+			`backdrop-filter:blur(10px);box-shadow:0 6px 20px rgba(0,0,0,0.35);` +
+			`transform:translateX(400px);transition:all 0.3s ease;max-width:300px;` +
+			`pointer-events:auto;cursor:default;`,
 	});
-	document.body.appendChild(notification);
-	setTimeout(() => notification.style.transform = 'translateX(0)', 100);
-	setTimeout(() => {
-		notification.style.transform = 'translateX(400px)';
-		setTimeout(() => { if (notification.parentNode) notification.remove(); }, 300);
-	}, duration * 1000);
+	notification.addEventListener('click', () => dismiss(notification));
+	container.appendChild(notification);
+	requestAnimationFrame(() => { notification.style.transform = 'translateX(0)'; });
+	const timer = setTimeout(() => dismiss(notification), duration * 1000);
+
+	function dismiss(el) {
+		clearTimeout(timer);
+		el.style.opacity = '0';
+		el.style.transform = 'translateX(400px)';
+		setTimeout(() => { if (el.parentNode) el.remove(); }, 300);
+	}
 }
 
 function genRandomIndexes(len) {
