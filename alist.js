@@ -210,7 +210,11 @@ if (isAList) {
 	window.getSongUrl = async function(song, br) {
 		try {
 			const res = await AList.getFileInfo(`${song.path}/${song.name}`);
-			return res.data?.raw_url || null;
+			let url = res.data?.raw_url || null;
+			if (url && location.protocol === 'https:' && /^http:/.test(url)) {
+				url = url.replace(/^http:/, 'https:');
+			}
+			return url;
 		} catch (e) {
 			console.error(e);
 			return null;
