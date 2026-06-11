@@ -1790,9 +1790,9 @@
 							:class="{ active: currIndSh === index }" @click="playSong(index, true)">
 							<div class="song-index">{{ (index + 1).toString().padStart(2, '0') }}</div>
 							<div class="song-info">
-								<div class="song-name">{{ song.name }}</div>
+								<div class="song-name">{{ parseSongDisplayInfo(song).title }}</div>
 								<div class="song-artist">
-									{{ Array.isArray(song.artist) ? song.artist.join(' / ') : song.artist }}{{ song.album ? ` · ${song.album}` : '' }}
+									{{ parseSongDisplayInfo(song).artist || (Array.isArray(song.artist) ? song.artist.join(' / ') : song.artist) }}{{ song.album ? ` · ${song.album}` : '' }}
 								</div>
 							</div>
 							<div class="song-actions">
@@ -2536,7 +2536,13 @@
 					formatSongSubtitle(song) {
 						if (!song) return '';
 						const rawArtist = Array.isArray(song.artist) ? song.artist.join(' / ') : (song.artist || '');
-						if (!rawArtist || /^\s*\/[^ ]*/.test(rawArtist)) return '';
+						if (!rawArtist) return '';
+						if (/^\s*\/[^ ]*/.test(rawArtist)) {
+							// AList路径，提取最后一级目录名
+							const parts = rawArtist.replace(/^\//, '').split('/');
+							const last = parts[parts.length - 1];
+							return last || '';
+						}
 						return rawArtist;
 					},
 					refreshSafeCoverUrl(url) {
@@ -2764,16 +2770,19 @@
 						this.endingSong = false;
 						setStorageExp(cacheKey.currInd, ind);
 						// 更新当前歌曲信息
+						const displayInfo = this.parseSongDisplayInfo(song);
+						const rawArtist = Array.isArray(song.artist) ? song.artist.join(' / ') : (song.artist || '');
+						const artistText = (displayInfo.artist || rawArtist) + (song.album ? (' · ' + song.album) : '');
 						this.currentSong = {
 							key,
 							id: song.id,
 							source: song.source,
-							title: song.name,
+							title: displayInfo.title,
 							lyric: song.lyric,
 							raw: {
 								...song
 							},
-							artist: `${Array.isArray(song.artist) ? song.artist.join(' / ') : song.artist}${song.album ? (' · ' + song.album) : ''}`,
+							artist: artistText,
 							cover: albumSbgImg
 						};
 						this.loadCover(song);
@@ -2951,8 +2960,8 @@
 						const key = `${song.source}_${song.id}`;
 						const token = (this._lyricLoadToken = (this._lyricLoadToken || 0) + 1);
 						const cachedLyric = this.lyricHistory[key] || null;
-						const keepExistingLyric = !!(isForce && cachedLyric && this.currentSong.key === key);
-						if (!keepExistingLyric) {
+						if (isForce) {
+							// 强制重新加载时，清空旧歌词显示，让用户看到正在切换
 							this.lyrics = [];
 							this.currentLyricIndex = -1;
 							this.lyricsEnd = null;
@@ -2963,20 +2972,25 @@
 						}
 
 						try {
-							const lyric = await getSongLyric(song, isForce ? this.currLyricSource : null, keepExistingLyric);
+							const lyric = await getSongLyric(song, isForce ? this.currLyricSource : null, false);
 							if (this._lyricLoadToken !== token || (this.currentSong.key && this.currentSong.key !== key)) return;
 							if (lyric) {
 								this.lyricHistory[key] = lyric;
 								setStorage(cacheKey.lyricHistory, this.lyricHistory);
 								this.parseLyrics(lyric);
-							} else if (keepExistingLyric) {
+							} else if (cachedLyric) {
+								// 新来源获取失败，回退到已有歌词
+								if (isForce) this.showNotification('该来源暂无此歌曲歌词，已还原', 'warning');
 								this.parseLyrics(cachedLyric);
+							} else {
+								this.showNotification('歌词获取失败，可尝试手动刷新', 'warning');
 							}
 						} catch (e) {
-							if (keepExistingLyric && this._lyricLoadToken === token && (!this.currentSong.key || this.currentSong.key === key)) {
+							console.error('获取歌词失败:', e);
+							if (cachedLyric && this._lyricLoadToken === token && (!this.currentSong.key || this.currentSong.key === key)) {
+								if (isForce) this.showNotification('获取歌词异常，已还原', 'warning');
 								this.parseLyrics(cachedLyric);
 							}
-							console.error('获取歌词失败:', e);
 						}
 					},
 					parseLyrics(lrcText) {
