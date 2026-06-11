@@ -216,6 +216,34 @@ if (isAList) {
 			return null;
 		}
 	}
+	// Netease备用歌词接口
+	const NETEASE_BACKUP_API = 'https://musicapi.fanyanbalin.dpdns.org';
+	window.fetchNeteaseBackupLyric = async function(id, timeout = 8000) {
+		try {
+			const res = await Promise.race([
+				fetch(`${NETEASE_BACKUP_API}/lyric?id=${encodeURIComponent(id)}`),
+				new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), timeout))
+			]);
+			const data = await res.json();
+			// 处理多种可能的返回格式
+			let lyricText = null;
+			if (typeof data === 'string') {
+				lyricText = data;
+			} else if (data.lrc && data.lrc.lyric) {
+				lyricText = data.lrc.lyric;
+			} else if (data.lyric) {
+				lyricText = data.lyric;
+			} else if (data.data && data.data.lyric) {
+				lyricText = data.data.lyric;
+			} else if (data.data && data.data.lrc && data.data.lrc.lyric) {
+				lyricText = data.data.lrc.lyric;
+			}
+			return lyricText;
+		} catch (e) {
+			console.warn('备用歌词接口请求失败:', e);
+			return null;
+		}
+	};
 	window.getSongLyric = async function(song, specificSource, silent) {
 		const key = `${song.source}_${song.id}_${song.lyric ? 'local' : (specificSource || 'auto')}`;
 		if (songAssetCache.lyric[key]) return songAssetCache.lyric[key];
@@ -252,8 +280,32 @@ if (isAList) {
 							songAssetCache.lyric[key] = lyric;
 							return lyric;
 						}
+						// Netease主接口失败时尝试备用接口
+						if (source === 'netease' && results.length > 0) {
+							const firstId = results[0].lyric_id || results[0].id;
+							if (firstId) {
+								!silent && showNotification('主接口失败，尝试备用接口获取歌词...', 'info');
+								const backupLyric = await fetchNeteaseBackupLyric(firstId);
+								if (backupLyric) {
+									songAssetCache.lyric[key] = backupLyric;
+									return backupLyric;
+								}
+							}
+						}
 					} catch (e) {
 						console.warn('获取歌词失败:', source, e);
+						// Netease异常时也尝试备用接口
+						if (source === 'netease') {
+							const searchId = song.lyric_id || song.id;
+							if (searchId) {
+								!silent && showNotification('主接口异常，尝试备用接口获取歌词...', 'info');
+								const backupLyric = await fetchNeteaseBackupLyric(searchId);
+								if (backupLyric) {
+									songAssetCache.lyric[key] = backupLyric;
+									return backupLyric;
+								}
+							}
+						}
 					}
 				}
 				!silent && showNotification('歌词获取失败，可尝试手动刷新', 'warning');
