@@ -94,6 +94,30 @@
 				}
 			}
 
+			/* Edge/性能模式：禁用高开销CSS效果 */
+			html.edge-perf .bg-animation {
+				animation-duration: 60s;
+			}
+			html.edge-perf .bg-overlay,
+			html.edge-perf .wrap-box,
+			html.edge-perf .navbar,
+			html.edge-perf .full-mask {
+				backdrop-filter: none;
+			}
+			html.edge-perf .full-bg {
+				filter: brightness(0.46);
+				animation: none;
+			}
+			html.edge-perf .song-item:hover {
+				transform: none;
+			}
+			html.edge-perf .song-item.active {
+				transform: translateX(4px);
+			}
+			html.edge-perf .current-cover.playing {
+				animation: rotate 20s linear infinite;
+			}
+
 			.hide {
 				display: none !important;
 			}
@@ -2801,6 +2825,7 @@
 							}
 							if (this._playSongToken !== playToken || this.currentSong.key !== key) return;
 							if (!songUrl) {
+								this._lyricLoadToken = (this._lyricLoadToken || 0) + 1; // 取消正在进行的歌词请求
 								return this.showNotification('无法获取音乐链接，请尝试其他歌曲或更换音质', 'error');
 							}
 						this.$refs.audioPlayer.src = songUrl;
@@ -2810,15 +2835,7 @@
 						this.totalTime = 0;
 						this.$refs.audioPlayer.load();
 							if (autoResume && time > 0) {
-								this.$refs.audioPlayer.addEventListener('loadedmetadata', () => {
-									if (this._playSongToken !== playToken || this.currentSong.key !== key) return;
-									this.applySeekTime(time);
-									this.$refs.audioPlayer.play().catch((e) => {
-										console.error('resume play error', e);
-									});
-								}, {
-									once: true
-								});
+								this._pendingResume = { playToken, key, time };
 							}
 							lyricPromise.finally(() => {
 								if (this._playSongToken === playToken && this.currentSong.key === key) {
@@ -2932,6 +2949,17 @@
 					},
 					updateTotalTime() {
 						this.totalTime = this.$refs.audioPlayer.duration;
+						// 处理恢复播放时的 seek
+						if (this._pendingResume) {
+							const { playToken, key, time } = this._pendingResume;
+							if (this._playSongToken === playToken && this.currentSong.key === key) {
+								this._pendingResume = null;
+								this.applySeekTime(time);
+								this.$refs.audioPlayer.play().catch((e) => {
+									console.error('resume play error', e);
+								});
+							}
+						}
 					},
 					changeQuality() {
 						if (this.currentSong.key && this.$refs.audioPlayer.src) {
@@ -2942,13 +2970,19 @@
 						if (!song) return;
 						const key = `${song.source}_${song.id}`;
 						const token = (this._coverRequestToken = (this._coverRequestToken || 0) + 1);
-						try {
-							const cover = await getAlbumCoverUrl(song);
-							if (this._coverRequestToken !== token || (this.currentSong.key && this.currentSong.key !== key)) return;
-							this.currentSong.cover = cover || albumSbgImg;
-						} catch (e) {
-							console.error('获取封面失败:', e);
+						let cover = null;
+						// 最多重试2次
+						for (let attempt = 0; attempt < 3; attempt++) {
+							try {
+								cover = await getAlbumCoverUrl(song);
+								if (cover && cover !== albumSbgImg) break;
+							} catch (e) {
+								console.warn(`封面获取失败(第${attempt + 1}次):`, e);
+							}
+							if (attempt < 2) await new Promise(r => setTimeout(r, 500));
 						}
+						if (this._coverRequestToken !== token || (this.currentSong.key && this.currentSong.key !== key)) return;
+						this.currentSong.cover = cover || albumSbgImg;
 					},
 					async loadLyrics(song, isForce) {
 						// if (isForce && !confirm('确定要强制重新加载远程歌词吗？')) return;
@@ -2972,15 +3006,24 @@
 						}
 
 						try {
-							const lyric = await getSongLyric(song, isForce ? this.currLyricSource : null, false);
+							let lyric = await getSongLyric(song, isForce ? this.currLyricSource : null, false);
 							if (this._lyricLoadToken !== token || (this.currentSong.key && this.currentSong.key !== key)) return;
+							// 切换来源失败时，自动尝试其他来源
+							if (!lyric && isForce && this.lyricSources) {
+								const remaining = this.lyricSources.filter(s => s !== this.currLyricSource);
+								for (const source of remaining) {
+									this.showNotification(`正在尝试获取歌词：${source}`, 'info');
+									lyric = await getSongLyric(song, source, false);
+									if (this._lyricLoadToken !== token || (this.currentSong.key && this.currentSong.key !== key)) return;
+									if (lyric) break;
+								}
+							}
 							if (lyric) {
 								this.lyricHistory[key] = lyric;
 								setStorage(cacheKey.lyricHistory, this.lyricHistory);
 								this.parseLyrics(lyric);
 							} else if (cachedLyric) {
-								// 新来源获取失败，回退到已有歌词
-								if (isForce) this.showNotification('该来源暂无此歌曲歌词，已还原', 'warning');
+								if (isForce) this.showNotification('所有来源均无此歌曲歌词，已还原', 'warning');
 								this.parseLyrics(cachedLyric);
 							} else {
 								this.showNotification('歌词获取失败，可尝试手动刷新', 'warning');
@@ -3225,6 +3268,10 @@
 					}
 				},
 				async mounted() {
+					// Edge 浏览器性能优化：自动启用简化视觉效果
+					if (/Edg\//.test(navigator.userAgent)) {
+						document.documentElement.classList.add('edge-perf');
+					}
 					this.setVolume(this.volume);
 					document.addEventListener('keydown', this.handleKeyDown);
 					this.searchHistory = await getStorage(cacheKey.searchHistory) || {}
