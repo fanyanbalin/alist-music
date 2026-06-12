@@ -213,9 +213,17 @@ window.requestMusicApi = async function(type, source, params = {}, options = {})
 	let lastError = null;
 	for (const base of bases) {
 		try {
-			const fetchPromise = fetch(buildMusicApiUrl(base, type, source, params)).then(res => {
-				if (!res.ok) throw new Error(`HTTP status: ${res.status}`);
-				return res.json();
+			const fetchPromise = fetch(buildMusicApiUrl(base, type, source, params)).then(async res => {
+				const text = await res.text();
+				if (!res.ok) {
+					// HTTP 错误状态码时也尝试解析 JSON，服务器可能返回了有效数据
+					try {
+						const data = JSON.parse(text);
+						if (isValid && isValid(data)) return data;
+					} catch (_) {}
+					throw new Error(`HTTP status: ${res.status}`);
+				}
+				return JSON.parse(text);
 			});
 			const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), timeout));
 			const data = await Promise.race([fetchPromise, timeoutPromise]);
@@ -327,6 +335,37 @@ window.getSongLyric = async function(song, specificSource) {
 }
 window.getAlbumCoverUrl = async function(song, size = 300) {
 	const coverId = song.pic_id || song.url_id;
+	// 歌单解析的歌曲没有 pic_id，但有 pic 直链
+	if (!coverId && song.pic) {
+		const key = `${song.source}_${song.id}`;
+		if (songAssetCache.cover[key]) return songAssetCache.cover[key];
+		songAssetCache.coverReq[key] = new Promise(resolve => {
+			let url = song.pic;
+			if (location.protocol === 'https:' && /^http:/.test(url)) {
+				url = url.replace(/^http:/, 'https:');
+			}
+			const img = new Image();
+			img.onload = () => {
+				songAssetCache.cover[key] = url;
+				delete songAssetCache.coverReq[key];
+				resolve(url);
+			};
+			img.onerror = () => {
+				delete songAssetCache.coverReq[key];
+				songAssetCache.cover[key] = albumSbgImg;
+				resolve(albumSbgImg);
+			};
+			setTimeout(() => {
+				if (songAssetCache.coverReq[key]) {
+					delete songAssetCache.coverReq[key];
+					songAssetCache.cover[key] = albumSbgImg;
+					resolve(albumSbgImg);
+				}
+			}, 8000);
+			img.src = url;
+		});
+		return songAssetCache.coverReq[key];
+	}
 	if (!coverId) return albumSbgImg;
 	const key = `${song.source}_${song.id}`;
 	if (songAssetCache.cover[key]) return songAssetCache.cover[key];
@@ -415,13 +454,3 @@ window.sourceChangeBind = async function() {
 }
 window.uploadLyricBind = async function() {}
 window.mixin = {}
-// 从LRC文本中提取最后一句的时间戳(秒)，用于匹配歌曲时长
-window.getLastLyricTimestamp = function(lrcText) {
-	if (!lrcText) return -1;
-	const lines = lrcText.split('\n');
-	for (let i = lines.length - 1; i >= 0; i--) {
-		const match = lines[i].match(/\[(\d{2}):(\d{2})\.(\d{2,3})\]/);
-		if (match) return parseInt(match[1]) * 60 + parseInt(match[2]) + parseInt(match[3]) / (match[3].length === 3 ? 1000 : 100);
-	}
-	return -1;
-};
