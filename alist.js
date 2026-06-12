@@ -248,12 +248,16 @@ if (isAList) {
 			return null;
 		}
 	};
-	window.getSongLyric = async function(song, specificSource, silent) {
-		const key = `${song.source}_${song.id}_${song.lyric ? 'local' : 'none'}`;
+	// 保存 utils.js 的云模式 getSongLyric，AList 版本由内部逻辑路由
+	const _cloudGetSongLyric = window.getSongLyric;
+	window.getSongLyric = async function(song, specificSource) {
+		// 云模式歌曲：委托给 utils.js 的云模式函数
+		if (song.source !== 'alist') return _cloudGetSongLyric(song, specificSource);
+		// AList 无本地 LRC：specificSource 时返回 null 由 loadLyrics 跨源搜索处理
+		if (!song.lyric) return null;
+		const key = `${song.source}_${song.id}_local`;
 		if (songAssetCache.lyric[key]) return songAssetCache.lyric[key];
 		if (songAssetCache.lyricReq[key]) return songAssetCache.lyricReq[key];
-		// 没有本地 LRC 文件，直接返回 null（不请求远程 API）
-		if (!song.lyric) return null;
 		songAssetCache.lyricReq[key] = (async function() {
 		try {
 			const { data } = await AList.getFileInfo(song.lyric);
@@ -273,6 +277,37 @@ if (isAList) {
 		})();
 		return songAssetCache.lyricReq[key];
 	}
+	// 共享上传核心：song 需包含 {path, name, id}，lyricContent 为歌词文本
+	// 返回 {success, path} 供调用方自行处理提示
+	window._autoLrcUploaded = window._autoLrcUploaded || new Set();
+	window.doUploadLyricCore = async function(song, lyricContent) {
+		if (!song || !song.path || !song.name || !lyricContent) return { success: false };
+		const idKey = song.id || md5(song.path + song.name).slice(0, 8);
+		const lrcPath = `${song.path}/${getFileName(song.name)}.lrc`;
+		// 去重：已自动上传过的跳过
+		if (_autoLrcUploaded.has(idKey)) return { success: true, path: lrcPath };
+		try {
+			const formData = new FormData();
+			formData.append('file', new Blob([lyricContent], { type: 'text/plain' }));
+			await AList.uploadRawFile(formData, lrcPath);
+			_autoLrcUploaded.add(idKey);
+			// 更新内存中的数据
+			withVueApp(app => {
+				if (app.playList) {
+					let one = app.playList.find(x => x.id == idKey);
+					if (one) { one.lyric = lrcPath; setStorage(cacheKey.playList, app.playList); }
+				}
+			});
+			if (typeof musicList !== 'undefined' && musicList) {
+				let item = musicList.find(x => x.id == idKey);
+				if (item) { item.lyric = lrcPath; setStorage(getAListScopeKey('alist_MusicList'), musicList); }
+			}
+			return { success: true, path: lrcPath };
+		} catch (e) {
+			console.warn('自动上传歌词失败:', e);
+			return { success: false };
+		}
+	};
 	// 反上传歌词到AList
 	window.uploadLyricBind = async function() {
 		if (!this.currentSong || !this.currentSong.raw) {
@@ -281,31 +316,12 @@ if (isAList) {
 		const key = `${this.currentSong.raw.source}_${this.currentSong.raw.id}`
 		console.log(key);
 		if (this.lyricHistory[key]) {
-			const formData = new FormData();
-			formData.append('file', new Blob([this.lyricHistory[key]], {
-				type: 'text/plain'
-			}));
-			const path = `${this.currentSong.raw.path}/${getFileName(this.currentSong.raw.name)}.lrc`
-			AList.uploadRawFile(formData, path).then(() => {
-				showNotification('歌词上传成功', 'success')
-				withVueApp(app => {
-					if (app.playList) {
-						let one = app.playList.find(x => x.id == this.currentSong.raw.id)
-						if (one) {
-							one.lyric = path
-							setStorage(cacheKey.playList, app.playList)
-						}
-					}
-				})
-				if (typeof musicList !== 'undefined' && musicList) {
-					let item = musicList.find(x => x.id == this.currentSong.raw.id)
-					if (item) item.lyric = path
-					setStorage(getAListScopeKey('alist_MusicList'), musicList)
-				}
-			}).catch(e => {
-				console.error('歌词上传失败:', e)
-				showNotification('歌词上传失败: ' + (e.message || '未知错误'), 'error')
-			});
+			const result = await doUploadLyricCore(this.currentSong.raw, this.lyricHistory[key]);
+			if (result.success) {
+				showNotification('歌词上传成功', 'success');
+			} else {
+				showNotification('歌词上传失败', 'error');
+			}
 		} else {
 			showNotification('无可上传的歌词', 'warning')
 		}
@@ -461,13 +477,3 @@ async function downloadList() {
 		return null;
 	}
 }
-// 从LRC文本中提取最后一句的时间戳(秒)，用于匹配歌曲时长
-window.getLastLyricTimestamp = function(lrcText) {
-	if (!lrcText) return -1;
-	const lines = lrcText.split('\n');
-	for (let i = lines.length - 1; i >= 0; i--) {
-		const match = lines[i].match(/\[(\d{2}):(\d{2})\.(\d{2,3})\]/);
-		if (match) return parseInt(match[1]) * 60 + parseInt(match[2]) + parseInt(match[3]) / (match[3].length === 3 ? 1000 : 100);
-	}
-	return -1;
-};
