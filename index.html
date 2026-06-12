@@ -33,6 +33,7 @@
 	<body>
 		<div id="app" v-cloak>
 			<div class="bg-animation"></div>
+			<div class="bg-cover" :style="bgCoverStyle"></div>
 			<div class="bg-overlay"></div>
 			<div class="flt-tool">
 				<i class="fas m fa-search" @click="goTo('.content-section')"></i><i class="fas fa-circle-play"
@@ -68,23 +69,86 @@
 				<div class="content-section wrap-box">
 					<h2 class="section-title">
 						<i class="fas fa-list-ol" title="双击重置Alist配置"
-							onclick="resetAlist()"></i>{{ isAList ? 'AList曲库' : '搜索结果' }}
-						<span><template v-if="searchResults && searchResults.length">[ 共 {{ searchResults.length }} 条
-								]</template></span>
-						<i class="fas fa-arrow-up cursor" v-show="searchResults && searchResults.length > 10"
+							onclick="resetAlist()"></i>{{ isAList ? 'AList曲库' : (currentTab === 'playlist' ? '歌单解析' : '搜索结果') }}
+						<span><template v-if="currentTab === 'search' && searchResults && searchResults.length">[ 共 {{ searchResults.length }} 条 ]</template></span>
+						<span v-if="currentTab === 'playlist' && playlistInfo">[ 共 {{ playlistInfo.count }} 首 ]</span>
+						<!-- 标签切换 - 非AList模式时显示 -->
+						<div class="tab-switch" v-if="!isAList">
+							<span class="tab-btn" :class="{ active: currentTab === 'search' }" @click="currentTab = 'search'">
+								<i class="fas fa-search"></i> 搜索
+							</span>
+							<span class="tab-btn" :class="{ active: currentTab === 'playlist' }" @click="currentTab = 'playlist'">
+								<i class="fas fa-list"></i> 歌单
+							</span>
+						</div>
+						<i class="fas fa-arrow-up cursor" v-show="currentTab === 'search' && searchResults && searchResults.length > 10"
 							@click="toTopList(true)" title="滚动到顶部"></i>
 						<i class="fas fa-location-crosshairs cursor" v-show="isAList" @click="focusList(true)"
 							title="定位当前歌曲"></i>
 						<i class="fas fa-rotate cursor" v-show="isAList" @click="refresh" title="刷新此列表"></i>
 					</h2>
-					<div class="search-results" id="searchResults">
+					<!-- 歌单解析面板 - 只在非AList模式且歌单标签页显示 -->
+					<div class="playlist-parse-panel" v-show="!isAList && currentTab === 'playlist'">
+						<div class="playlist-parse-header" @click="playlistParseExpanded = !playlistParseExpanded">
+							<div class="playlist-parse-title">
+								<i class="fas fa-link"></i>
+								<span>歌单解析</span>
+							</div>
+							<i class="fas fa-chevron-down playlist-parse-toggle" :class="{ expanded: playlistParseExpanded }"></i>
+						</div>
+						<div class="playlist-parse-form" :class="{ collapsed: !playlistParseExpanded }">
+							<input type="text" class="playlist-parse-input" placeholder="输入歌单链接或ID..."
+								v-model="playlistUrl" @keyup.enter="parsePlaylist">
+							<button class="playlist-parse-btn" @click="parsePlaylist" :disabled="playlistLoading">
+								{{ playlistLoading ? '解析中...' : '解析' }}
+							</button>
+						</div>
+						<div class="playlist-parse-result" v-if="playlistInfo">
+							<div class="playlist-parse-info">
+								<img class="playlist-parse-cover" :src="playlistInfo.cover" @error="handlePlaylistCoverError">
+								<div class="playlist-parse-meta">
+									<div class="playlist-parse-name">{{ playlistInfo.name }}</div>
+									<div class="playlist-parse-count">共 {{ playlistInfo.count }} 首</div>
+								</div>
+								<button class="playlist-parse-load-btn" @click="loadPlaylistSongs">加载歌单</button>
+							</div>
+						</div>
+					</div>
+					<!-- 歌单歌曲列表 - 只在非AList模式且歌单标签页显示 -->
+					<div class="search-results" id="playlistSongs" v-show="!isAList && currentTab === 'playlist'">
+						<div class="empty-state" v-if="!playlistSongs.length">
+							<i class="fas fa-list"></i>
+							<div>在右侧输入歌单链接或ID进行解析</div>
+							<div>解析后点击"加载歌单"查看歌曲</div>
+						</div>
+						<div v-for="(song, index) in playlistSongs" :key="index" class="song-item"
+							:class="{ active: currentPlaylistIndex === index }" @click="playPlaylistSong(index)">
+							<div class="song-index">{{ (index + 1).toString().padStart(2, '0') }}</div>
+							<div class="song-info">
+								<div class="song-name">{{ song.name || song.title }}</div>
+								<div class="song-artist">
+									{{ formatPlaylistArtists(song) }}{{ song.al?.name || song.album ? ` · ${song.al?.name || song.album}` : '' }}
+								</div>
+							</div>
+							<div class="song-actions">
+								<button class="action-btn" @click.stop="downloadPlaylistSong(index)" title="下载音乐">
+									<i class="fas fa-download"></i>
+								</button>
+								<button class="action-btn" v-show="!isMoble" @click.stop="downloadPlaylistLyric(index)" title="下载歌词">
+									<i class="fas fa-file-text"></i>
+								</button>
+							</div>
+							<div class="song-duration">--:--</div>
+						</div>
+					</div>
+					<div class="search-results" id="searchResults" v-show="isAList || currentTab === 'search'">
 						<div class="empty-state" v-if="!searchResults.length">
 							<i class="fas fa-search"></i>
 							<div>在上方搜索框输入关键词开始搜索音乐</div>
 							<div>点击LOGO可以切换"云音乐"或"AList"</div>
 						</div>
 						<div v-for="(song, index) in searchResults" :key="index" class="song-item"
-							:class="{ active: currIndSh === index }" @click="playSong(index, true)">
+							:class="{ active: currIndSh === index }" @click="lastPlaySource = 'search'; playSong(index, true)">
 							<div class="song-index">{{ (index + 1).toString().padStart(2, '0') }}</div>
 							<div class="song-info">
 								<div class="song-name">{{ parseSongDisplayInfo(song).title }}</div>
@@ -148,7 +212,7 @@
 						</div>
 					</div>
 					<!-- 音质选择 -->
-					<div class="quality-container" v-if="!isAList">
+					<div class="quality-container" :class="{ 'quality-hidden': isAList }">
 						<div class="quality-label"><i class="fas fa-music"></i><span>音质</span></div>
 						<select class="quality-select" v-model="selectedQuality" @change="changeQuality">
 							<option value="128">标准 128K</option>
@@ -181,7 +245,7 @@
 				<div class="right-section">
 					<div class="lyrics-section wrap-box"
 						:class="{ 'full': lyricFull, 'lyric-switching': lyricSwitching }"
-						:style="{ 'font-size': lyricFull ? lyricFontSize + 'px' : '16px' }">
+						:style="lyricSectionStyle">
 
 						<div class="full-bg" v-if="lyricFull" :style="fullBgStyle"></div>
 						<div class="full-mask" v-if="lyricFull"></div>
@@ -189,13 +253,13 @@
 						<!-- 全屏时的顶部工具栏 -->
 						<div class="section-title full-toolbar" v-if="lyricFull">
 							<div class="toolbar-right">
-								<select v-model="currLyricSource" v-if="isAList && !currentSong.lyric"
+								<select v-model="currLyricSource" v-if="!currentSong.lyric"
 									class="source-select"
 									style="width: auto; height: 32px; padding: 0 10px; border-radius: 6px; background: rgba(255,255,255,0.1);"
 									@change="reloadCurrentLyrics()" title="切换歌词来源">
 									<option v-for="s in lyricSources" :value="s">{{ s }}</option>
 								</select>
-								<i class="fas cursor fa-rotate" v-if="isAList && !currentSong.lyric"
+								<i class="fas cursor fa-rotate" v-if="!currentSong.lyric"
 									@click="reloadCurrentLyrics()" title="刷新歌词"></i>
 								<i class="fas cursor fa-upload" v-if="isAList && !currentSong.lyric && currentSong.raw && lyricHistory[currentSong.raw.source + '_' + currentSong.raw.id]"
 									@click="uploadLyric()" title="上传歌词到AList"></i>
@@ -214,12 +278,12 @@
 									title="上一首"></i><i :class="isPlaying ? 'fas fa-pause' : 'fas fa-play'"
 									@click="togglePlay" :title="isPlaying ? '暂停' : '播放'"></i><i
 									class="fas fa-step-forward" @click="nextSong" title="下一首"></i></span>
-							<select v-model="currLyricSource" v-if="isAList && !currentSong.lyric" class="source-select"
+							<select v-model="currLyricSource" v-if="!currentSong.lyric" class="source-select"
 								style="width: auto; height: 24px; padding: 0 5px; margin-right: 5px; border-radius: 4px;"
 								@change="reloadCurrentLyrics()" title="切换歌词来源">
 								<option v-for="s in lyricSources" :value="s">{{ s }}</option>
 							</select>
-							<i class="fas cursor fa-rotate" v-if="isAList && !currentSong.lyric"
+							<i class="fas cursor fa-rotate" v-if="!currentSong.lyric"
 								@click="reloadCurrentLyrics()" title="刷新歌词"></i>
 							<i class="fas cursor" :class="[ lyricLock ? 'fa-lock' : 'fa-lock-open' ]"
 								@click="lyricLock = !lyricLock" :title="lyricLock ? '解锁歌词' : '锁定歌词'"></i>
@@ -246,7 +310,11 @@
 							<div class="full-lyrics-main">
 								<!-- 歌词容器 -->
 								<div class="lyrics-container" ref="lyricsContainer">
-									<div class="lyric-empty" v-if="!lyrics.length">暂无歌词</div>
+									<div class="lyric-empty" v-if="!lyrics.length && !lyricLoading">暂无歌词</div>
+									<div class="lyric-loading" v-if="lyricLoading">
+										<i class="fas fa-spinner fa-pulse"></i>
+										<span>{{ lyricLoadingMsg || '正在获取歌词...' }}</span>
+									</div>
 									<div v-for="(lyric, index) in lyrics" :key="index" class="lyric-line"
 										:class="{ active: currentLyricIndex === index, cursor: !lyricLock }"
 										@click="seekToLyric(lyric.time)">{{ lyric.text }}</div>
@@ -342,7 +410,7 @@
 		<script src="https://mirrors.sustech.edu.cn/cdnjs/ajax/libs/axios/1.11.0/axios.min.js"></script>
 		<script src="https://mirrors.sustech.edu.cn/cdnjs/ajax/libs/blueimp-md5/2.19.0/js/md5.min.js"></script>
 <script src="utils.js?t=12"></script>
-		<script src="alist.js?t=11"></script>
+		<script src="alist.js?t=12"></script>
 		<script>
 			var currTimeFlag = Date.now()
 			var vueApp = Vue.createApp({
@@ -371,7 +439,7 @@
 						volume: getStorageExp('dm_volume') ?? 80,
 						lyrics: [],
 						currentLyricIndex: -1,
-						lyricFontSize: window.innerWidth < 800 ? 18 : Math.min(getStorageExp(cacheKey.fontSize) || 46, 50),
+						lyricFontSize: window.innerWidth < 800 ? 18 : Math.min(getStorageExp(cacheKey.fontSize) || 46, 52),
 						lyricsEnd: null,
 						lyricLock: true,
 						lyricFull: false,
@@ -386,6 +454,20 @@
 						fullVolumeVisible: false,
 						lyricSources: window.lyricSources || [],
 						currLyricSource: window.lyricSources ? window.lyricSources[0] : 'netease',
+						lyricLoading: false,
+						lyricLoadingMsg: '',
+						_coverColorCache: {},
+						fullCoverColors: null,
+						// 歌单解析相关数据
+						playlistParseExpanded: false,
+						playlistUrl: '',
+						playlistLoading: false,
+						playlistInfo: null,
+						playlistSongs: [],
+						currentTab: 'search',
+						currentPlaylistIndex: -1,
+						playlistPlayResults: [],
+						lastPlaySource: 'search',
 					};
 				},
 				computed: {
@@ -394,12 +476,73 @@
 						if (this.volume < 50) return 'cursor fas fa-volume-down volume-icon';
 						return 'cursor fas fa-volume-up volume-icon';
 					},
+					lyricSectionStyle() {
+						const base = { 'font-size': (this.lyricFull ? this.lyricFontSize : 16) + 'px' };
+						if (!this.lyricFull) return base;
+						return Object.assign(base, this.fullSectionBgStyle);
+					},
 					fullBgStyle() {
 						const url = this.safeCoverUrl || albumSbgImg;
+						return { backgroundImage: `url(${url})` };
+					},
+					fullSectionBgStyle() {
+						const cols = this.fullCoverColors;
+						if (!cols || !cols.dominant) {
+							return {
+								background: `linear-gradient(175deg, #0f1419 0%, #131921 35%, #11161d 70%, #0c1017 100%), #0d1117`
+							};
+						}
+						const d = cols.dominant;
+						const a = cols.accent;
+						// RGB→HSL 转换
+						const rgb2hsl = (c) => {
+							const r = c.r/255, g = c.g/255, b = c.b/255;
+							const max = Math.max(r,g,b), min = Math.min(r,g,b);
+							const l = (max+min)/2;
+							if (max===min) return {h:0, s:0, l};
+							const d2 = max-min;
+							const s = l>0.5 ? d2/(2-max-min) : d2/(max+min);
+							let h;
+							switch(max){
+								case r: h=((g-b)/d2+(g<b?6:0))/6; break;
+								case g: h=((b-r)/d2+2)/6; break;
+								case b: h=((r-g)/d2+4)/6; break;
+							}
+							return {h: h*360, s, l};
+						};
+						const hsl2rgb = (hsl) => {
+							const h=hsl.h/360, s=hsl.s, l=hsl.l;
+							if(s===0) return {r:Math.round(l*255),g:Math.round(l*255),b:Math.round(l*255)};
+							const hue2rgb = (p,q,t) => {if(t<0)t+=1;if(t>1)t-=1;if(t<1/6)return p+(q-p)*6*t;if(t<1/2)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p;};
+							const q = l<0.5 ? l*(1+s) : l+s-l*s;
+							const p = 2*l - q;
+							return {r:Math.round(hue2rgb(p,q,h+1/3)*255),g:Math.round(hue2rgb(p,q,h)*255),b:Math.round(hue2rgb(p,q,h-1/3)*255)};
+						};
+						const toRgba = (c, a) => `rgba(${c.r},${c.g},${c.b},${a})`;
+
+						// 从主色衍生：高饱和高亮变体
+						const dhsl = rgb2hsl(d);
+						const vivid = hsl2rgb({h: dhsl.h, s: Math.min(1, dhsl.s * 1.3), l: 0.42});
+						const glow = hsl2rgb({h: dhsl.h, s: Math.min(1, dhsl.s * 1.1), l: 0.28});
+						const deep = hsl2rgb({h: dhsl.h, s: dhsl.s * 0.8, l: 0.12});
+
+						// 从辅色衍生：弱光晕
+						const ahsl = rgb2hsl(a);
+						const aGlow = hsl2rgb({h: ahsl.h, s: Math.min(1, ahsl.s * 1.2), l: 0.35});
+
 						return {
-							backgroundImage: `radial-gradient(1200px circle at 30% 20%, rgba(255, 107, 107, 0.14), transparent 55%),
-								radial-gradient(900px circle at 70% 70%, rgba(76, 175, 80, 0.10), transparent 60%),
-								url(${url})`
+							background: [
+								// 左上主光斑 — 大面鲜艳
+								`radial-gradient(ellipse 55% 45% at 25% 20%, ${toRgba(vivid, 0.55)}, transparent 55%)`,
+								// 右下辅色光晕
+								`radial-gradient(ellipse 50% 40% at 72% 65%, ${toRgba(aGlow, 0.35)}, transparent 50%)`,
+								// 中心微弱亮区
+								`radial-gradient(ellipse 40% 35% at 48% 42%, ${toRgba(glow, 0.22)}, transparent 48%)`,
+								// 深色底色 — 仅底部渐深保证文字可读
+								`linear-gradient(175deg, ${toRgba(deep, 0.25)} 0%, rgba(0,0,0,0) 30%, rgba(0,0,0,0) 65%, rgba(0,0,0,0.35) 100%)`,
+								// 纯色兜底 — 填充所有透明间隙
+								`#0d1117`
+							].join(', ')
 						};
 					},
 					currIndSh() {
@@ -417,9 +560,15 @@
 						return !!this.currentDownloadTarget;
 					},
 					fullSongList() {
+						if (this.lastPlaySource === 'playlist' && this.playlistPlayResults.length > 0) {
+							return this.playlistPlayResults;
+						}
 						return this.searchResults;
 					},
 					fullSongListTitle() {
+						if (this.lastPlaySource === 'playlist' && this.playlistPlayResults.length > 0) {
+							return this.playlistInfo ? this.playlistInfo.name : '歌单列表';
+						}
 						return this.isAList ? '当前曲库' : '搜索结果';
 					},
 					fullDisplayInfo() {
@@ -433,6 +582,16 @@
 					},
 					displayCoverUrl() {
 						return this.safeCoverUrl !== albumSbgImg ? this.safeCoverUrl : (this.currentSong.cover || albumSbgImg);
+					},
+					bgImageUrl() {
+						const url = this.safeCoverUrl !== albumSbgImg ? this.safeCoverUrl : (this.currentSong.cover || albumSbgImg);
+						return url && url !== albumSbgImg ? url : null;
+					},
+					bgCoverStyle() {
+						const url = this.bgImageUrl;
+						return url
+							? { backgroundImage: `url(${url})`, opacity: 1 }
+							: { opacity: 0 };
 					},
 					fullCurrentSubtitle() {
 						return this.formatSongSubtitle(this.currentSong.raw || this.currentSong);
@@ -464,6 +623,122 @@
 					},
 					formatPlaylistArtist(song) {
 						return this.parseSongDisplayInfo(song).artist;
+					},
+					formatPlaylistArtists(song) {
+						if (song.ar && Array.isArray(song.ar)) return song.ar.map(a => a.name).join(' / ');
+						if (song.artist) return Array.isArray(song.artist) ? song.artist.join(' / ') : song.artist;
+						return '';
+					},
+					extractPlaylistId(url) {
+						if (!url) return null;
+						let id = url.trim();
+						if (id.includes('music.163.com')) {
+							const match = id.match(/[?&]id=(\d+)/);
+							if (match) return match[1];
+						}
+						if (id.includes('playlist')) {
+							const match = id.match(/[?&]id=(\d+)/);
+							if (match) return match[1];
+						}
+						if (/^\d+$/.test(id)) return id;
+						return null;
+					},
+					async parsePlaylist() {
+						const id = this.extractPlaylistId(this.playlistUrl);
+						if (!id) { this.showNotification('请输入有效的歌单链接或ID', 'warning'); return; }
+						this.playlistLoading = true;
+						this.playlistInfo = null;
+						this.playlistSongs = [];
+						try {
+							const data = await requestMusicApi('playlist', this.selectedSource, { id: id });
+							const playlist = data?.playlist;
+							if (playlist && playlist.name) {
+								this.playlistInfo = {
+									name: playlist.name,
+									cover: playlist.coverImgUrl || playlist.cover || '',
+									count: playlist.trackCount || 0
+								};
+								this.playlistSongs = playlist.tracks || [];
+								this.showNotification('歌单解析成功', 'success');
+							} else {
+								this.showNotification('未找到该歌单', 'warning');
+							}
+						} catch (e) {
+							console.error('解析歌单失败:', e);
+							this.showNotification('解析歌单失败', 'error');
+						} finally { this.playlistLoading = false; }
+					},
+					loadPlaylistSongs() {
+						if (!this.playlistSongs.length) { this.showNotification('歌单为空', '警告'); return; }
+						this.currentTab = 'search';
+						this.lastPlaySource = 'search';
+						this.searchResults = this.playlistSongs.map(song => ({
+							name: song.name || song.title || '',
+							artist: this.formatPlaylistArtists(song) ? [this.formatPlaylistArtists(song)] : [],
+							album: song.al?.name || song.album || '',
+							id: song.id,
+							source: this.selectedSource,
+							pic: song.al?.picUrl || song.pic || ''
+						}));
+						this.playlistPlayResults = [...this.searchResults];
+						this.showNotification(`已加载 ${this.searchResults.length} 首歌曲`, 'success');
+						this.$nextTick(() => {
+							const container = document.querySelector('#searchResults');
+							if (container) container.scrollTop = 0;
+						});
+					},
+					handlePlaylistCoverError(e) { e.target.src = albumSbgImg; },
+					playPlaylistSong(index) {
+						if (index < 0 || index >= this.playlistSongs.length) return;
+						const song = this.playlistSongs[index];
+						this.currentPlaylistIndex = index;
+						this.lastPlaySource = 'playlist';
+						this.playlistPlayResults = this.playlistSongs.map(s => ({
+							name: s.name || s.title || '',
+							artist: this.formatPlaylistArtists(s) ? [this.formatPlaylistArtists(s)] : [],
+							album: s.al?.name || s.album || '',
+							id: s.id,
+							source: this.selectedSource,
+							pic: s.al?.picUrl || s.pic || ''
+						}));
+						const originalSearchResults = this.searchResults;
+						this.searchResults = this.playlistPlayResults;
+						this.playSong(index, true);
+						this.$nextTick(() => {
+							setTimeout(() => { this.searchResults = originalSearchResults; }, 100);
+						});
+					},
+					downloadPlaylistSong(index) {
+						if (index < 0 || index >= this.playlistSongs.length) return;
+						const song = this.playlistSongs[index];
+						const searchSong = {
+							name: song.name || song.title || '',
+							artist: this.formatPlaylistArtists(song) ? [this.formatPlaylistArtists(song)] : [],
+							album: song.al?.name || song.album || '',
+							id: song.id,
+							source: this.selectedSource,
+							pic: song.al?.picUrl || song.pic || ''
+						};
+						this.searchResults.push(searchSong);
+						const downloadIndex = this.searchResults.length - 1;
+						this.downloadSong(downloadIndex, true);
+						this.$nextTick(() => { this.searchResults.pop(); });
+					},
+					downloadPlaylistLyric(index) {
+						if (index < 0 || index >= this.playlistSongs.length) return;
+						const song = this.playlistSongs[index];
+						const searchSong = {
+							name: song.name || song.title || '',
+							artist: this.formatPlaylistArtists(song) ? [this.formatPlaylistArtists(song)] : [],
+							album: song.al?.name || song.album || '',
+							id: song.id,
+							source: this.selectedSource,
+							pic: song.al?.picUrl || song.pic || ''
+						};
+						this.searchResults.push(searchSong);
+						const downloadIndex = this.searchResults.length - 1;
+						this.downloadLyric(downloadIndex, true);
+						this.$nextTick(() => { this.searchResults.pop(); });
 					},
 					formatSongSubtitle(song) {
 						if (!song) return '';
@@ -504,6 +779,56 @@
 							};
 						}
 					},
+					_fetchCoverColors(url) {
+						if (!url || url === albumSbgImg) {
+							this.fullCoverColors = null;
+							return;
+						}
+						if (this._coverColorCache[url]) {
+							this.fullCoverColors = this._coverColorCache[url];
+							return;
+						}
+						this.fullCoverColors = null;
+						const img = new Image();
+						img.crossOrigin = 'anonymous';
+						img.onload = () => {
+							try {
+								const canvas = document.createElement('canvas');
+								canvas.width = 60; canvas.height = 60;
+								const ctx = canvas.getContext('2d');
+								ctx.drawImage(img, 0, 0, 60, 60);
+								const data = ctx.getImageData(0, 0, 60, 60).data;
+								const half = 30;
+								// 分区采样：上半为主色，右下为辅色
+								const sample = (x0, y0, x1, y1) => {
+									let r = 0, g = 0, b = 0, count = 0;
+									for (let y = y0; y < y1; y++) {
+										for (let x = x0; x < x1; x++) {
+											const i = (y * 60 + x) * 4;
+											const pr = data[i], pg = data[i + 1], pb = data[i + 2];
+											const sum = pr + pg + pb;
+											if (sum < 50 || sum > 720) continue;
+											// 加权：鲜艳像素权重更高
+											const maxC = Math.max(pr, pg, pb), minC = Math.min(pr, pg, pb);
+											const saturation = maxC > 0 ? (maxC - minC) / maxC : 0;
+											const w = 0.5 + saturation * 2;
+											r += pr * w; g += pg * w; b += pb * w; count += w;
+										}
+									}
+									return count > 0 ? { r: Math.round(r / count), g: Math.round(g / count), b: Math.round(b / count) } : null;
+								};
+								const dominant = sample(0, 0, 60, half) || sample(0, 0, 60, 60);
+								const accent = sample(half, half, 60, 60) || sample(half, 0, 60, half);
+								if (dominant) {
+									const cols = { dominant, accent: accent || dominant };
+									this._coverColorCache[url] = cols;
+									this.fullCoverColors = cols;
+								}
+							} catch (_) {}
+						};
+						img.onerror = () => { this.fullCoverColors = null; };
+						img.src = url;
+					},
 					tryRestorePlayback() {
 						if (this.restoredPlayback || !this.pendingRestore) return;
 						if (this.currentSong.key) {
@@ -528,7 +853,8 @@
 							return this.showNotification('请先选择要播放的歌曲', 'warning');
 						}
 						const resumeTime = this.$refs.audioPlayer ? this.$refs.audioPlayer.currentTime : 0;
-						return this.playSong(source.cur, source.isSearch, resumeTime, isForce, this.isPlaying, !this.isPlaying);
+						this._switchToPlaylistSourceThen(source, () =>
+							this.playSong(source.cur, source.isSearch, resumeTime, isForce, this.isPlaying, !this.isPlaying));
 					},
 					getCurrentQueueSong() {
 						if (this.currIndSh >= 0 && this.currIndSh < this.searchResults.length) {
@@ -679,11 +1005,37 @@
 						}
 					},
 					getPlaybackSource() {
+						if (this.lastPlaySource === 'playlist' && this.playlistPlayResults.length > 0) {
+							return {
+								isSearch: true,
+								cur: this.currentPlaylistIndex,
+								len: this.playlistPlayResults.length
+							};
+						}
 						return {
 							isSearch: true,
 							cur: this.currIndSh,
 							len: this.searchResults.length
 						};
+					},
+					_switchToPlaylistSourceThen(source, fn) {
+						if (this.lastPlaySource === 'playlist' && this.playlistPlayResults.length > 0) {
+							const original = this.searchResults;
+							this.searchResults = this.playlistPlayResults;
+							const result = fn();
+							this.currentPlaylistIndex = this.currIndSh;
+							const cleanup = () => {
+								this.currentPlaylistIndex = this.currIndSh;
+								this.searchResults = original;
+							};
+							if (result && typeof result.then === 'function') {
+								result.then(cleanup, cleanup);
+							} else {
+								this.$nextTick(() => setTimeout(cleanup, 100));
+							}
+						} else {
+							fn();
+						}
 					},
 					ensureRandomIndexes(len, cur) {
 						if (!len) return [];
@@ -694,16 +1046,32 @@
 						return this.randomIndexes;
 					},
 					preloadSongAssets(song) {
-						if (!song) return;
-						const key = `${song.source}_${song.id}`;
-						getAlbumCoverUrl(song).catch(() => {});
-						if (this.lyricHistory[key]) return;
-						getSongLyric(song).then(lyric => {
-							if (!lyric || this.lyricHistory[key]) return;
-							this.lyricHistory[key] = lyric;
-							setStorage(cacheKey.lyricHistory, this.lyricHistory);
-						}).catch(() => {});
-					},
+					if (!song) return;
+					const key = `${song.source}_${song.id}`;
+					getAlbumCoverUrl(song).catch(() => {});
+					if (this.lyricHistory[key]) return;
+					// 尝试预加载歌词
+					(async () => {
+						let lyric = await getSongLyric(song).catch(() => null);
+						// AList 无本地 lrc：尝试在线源预加载
+						if (!lyric && this.isAList) {
+							const cleanName = (song.name || '').replace(/\.[^./\\]+$/, '');
+							for (const source of this.lyricSources) {
+								const sr = await requestMusicApi('search', source, {
+									name: cleanName, count: 1
+								}, { timeout: 6000, isValid: d => Array.isArray(d) && d.length > 0 }).catch(() => null);
+								if (sr && sr.length) {
+									const m = sr[0];
+									lyric = await getSongLyric({ ...song, id: m.id, lyric_id: m.lyric_id || m.id, source }, source).catch(() => null);
+									if (lyric) break;
+								}
+							}
+						}
+						if (!lyric || this.lyricHistory[key]) return;
+						this.lyricHistory[key] = lyric;
+						setStorage(cacheKey.lyricHistory, this.lyricHistory);
+					})().catch(() => {});
+				},
 					preloadQueueNeighbors(ind) {
 						const list = this.searchResults;
 						const len = list.length;
@@ -718,7 +1086,9 @@
 						let key = `${song.source}_${song.id}`
 						if (this.currentSong.key === key && !isForce) return;
 						this.endingSong = false;
-						this._pendingResume = null; // 清除上一首歌的残留 resume 状态
+						this._pendingResume = null;
+						// 自动切歌起点追踪（URL 失败时跳过而非回滚）
+						if (!isForce) this._autoSkipStartInd = undefined;
 						setStorageExp(cacheKey.currInd, ind);
 						// 更新当前歌曲信息
 						const displayInfo = this.parseSongDisplayInfo(song);
@@ -730,9 +1100,7 @@
 							source: song.source,
 							title: displayInfo.title,
 							lyric: song.lyric,
-							raw: {
-								...song
-							},
+							raw: { ...song },
 							artist: artistText,
 							cover: albumSbgImg
 						};
@@ -741,11 +1109,9 @@
 						try {
 							this.showNotification('正在加载音乐...', 'info');
 							let songUrl = null;
-							// AList URL 是签名链接会过期，绝不使用缓存
 							if (!isForce && !this.isAList) songUrl = getStorageExp(key);
 							if (!songUrl) {
 								songUrl = await getSongUrl(song, this.selectedQuality);
-								// AList 原始链接为签名URL会过期，不缓存；云模式缓存2小时
 								if (songUrl && song.source !== 'alist') {
 									setStorageExp(key, songUrl, 2 * 60 * 60);
 								}
@@ -754,8 +1120,9 @@
 							}
 							if (this._playSongToken !== playToken || this.currentSong.key !== key) return;
 							if (!songUrl) {
-								this._lyricLoadToken = (this._lyricLoadToken || 0) + 1; // 取消正在进行的歌词请求
-								return this.showNotification('无法获取音乐链接，请尝试其他歌曲或更换音质', 'error');
+								// URL 获取失败：自动跳过到下一首，不执行回滚
+								this._lyricLoadToken = (this._lyricLoadToken || 0) + 1;
+								return this._autoSkipToNext(ind, isSearch, suppressAutoPlay);
 							}
 						// 统一处理 HTTPS 升级，防止 Mixed Content 警告（含缓存恢复的场景）
 						if (location.protocol === 'https:' && /^http:/.test(songUrl)) {
@@ -767,27 +1134,59 @@
 						this.currentTime = 0;
 						this.totalTime = 0;
 						this.$refs.audioPlayer.load();
-							if (autoResume && time > 0) {
-								this._pendingResume = { playToken, key, time };
+						// URL 加载成功：清除自动切歌追踪
+						this._autoSkipStartInd = undefined;
+						if (autoResume && time > 0) {
+							this._pendingResume = { playToken, key, time };
+						}
+						lyricPromise.finally(() => {
+							if (this._playSongToken === playToken && this.currentSong.key === key) {
+								this.preloadQueueNeighbors(ind);
 							}
-							lyricPromise.finally(() => {
-								if (this._playSongToken === playToken && this.currentSong.key === key) {
-									this.preloadQueueNeighbors(ind);
-								}
-							}).catch(() => {});
-							// 自动播放
-							if (!this.historyTime && !suppressAutoPlay) this.$refs.audioPlayer.play().then(() => {
-								if (this._playSongToken !== playToken || this.currentSong.key !== key) return;
-								this.showNotification(`开始播放 ${artistText} · ${displayInfo.title}`, 'success');
-							}).catch((e) => {
-								if (this._playSongToken !== playToken || this.currentSong.key !== key) return;
-								console.error('play error', e);
-								// this.showNotification('播放失败，请尝试其他歌曲', 'error');
-							});
+						}).catch(() => {});
+						// 自动播放
+						if (!this.historyTime && !suppressAutoPlay) this.$refs.audioPlayer.play().then(() => {
+							if (this._playSongToken !== playToken || this.currentSong.key !== key) return;
+							this.showNotification(`开始播放 ${artistText} · ${displayInfo.title}`, 'success');
+						}).catch((e) => {
+							if (this._playSongToken !== playToken || this.currentSong.key !== key) return;
+							console.error('play error', e);
+						});
 						} catch (error) {
 							if (this._playSongToken !== playToken || this.currentSong.key !== key) return;
-							this.showNotification('播放失败，请检查网络连接', 'error');
+							console.error('playSong error:', error);
+							this._lyricLoadToken = (this._lyricLoadToken || 0) + 1;
+							return this._autoSkipToNext(ind, isSearch, suppressAutoPlay);
 						}
+					},
+					// 自动切歌：从 ind 跳到下一首，循环检测防无限切歌
+					_autoSkipToNext(ind, isSearch, suppressAutoPlay) {
+						const listLen = this.searchResults.length;
+						if (listLen <= 1) {
+							// 只有一首歌：无法跳过，停止播放并提示
+							this.isPlaying = false;
+							if (this.$refs.audioPlayer && this.$refs.audioPlayer.src) {
+								this.$refs.audioPlayer.pause();
+							}
+							return this.showNotification('无法获取音乐链接，请尝试更换音质', 'error');
+						}
+						// 标记起点，首次进入时记录
+						if (this._autoSkipStartInd === undefined) {
+							this._autoSkipStartInd = ind;
+						}
+						const nextInd = (ind + 1) % listLen;
+						// 已循环回起点 → 所有歌曲都失败
+						if (nextInd === this._autoSkipStartInd) {
+							this._autoSkipStartInd = undefined;
+							this.isPlaying = false;
+							if (this.$refs.audioPlayer && this.$refs.audioPlayer.src) {
+								this.$refs.audioPlayer.pause();
+							}
+							return this.showNotification('列表所有歌曲均无法播放，请更换音质或检查网络', 'error');
+						}
+						this.showNotification(`无法获取链接，自动跳过 (${nextInd + 1}/${listLen})`, 'warning');
+						// 递归调用 playSong 尝试下一首（isForce=true 跳过同 key 守卫）
+						return this.playSong(nextInd, isSearch, 0, true, false, suppressAutoPlay);
 					},
 					toggleMode() {
 						this.playMode = this.playMode === 'loop' ? 'random' : this.playMode === 'random' ? 'one' :
@@ -813,8 +1212,7 @@
 					},
 					prevSong() {
 						const source = this.getPlaybackSource();
-						let cur = source.cur,
-							len = source.len;
+						let cur = source.cur, len = source.len;
 						if (!len) return;
 						if (cur < 0) cur = 0;
 						let ind = cur > 0 ? cur - 1 : len - 1;
@@ -824,13 +1222,13 @@
 							if (randomInd < 0) randomInd = 0;
 							ind = randomIndexes[randomInd > 0 ? randomInd - 1 : randomIndexes.length - 1];
 						}
-						this.playSong(ind, source.isSearch)
+						this._switchToPlaylistSourceThen(source, () => this.playSong(ind, source.isSearch));
 					},
 					nextSong(isManual) {
 						if (isManual === false && this.playMode === 'one') {
-							this.$refs.audioPlayer.currentTime = 0
+							this.$refs.audioPlayer.currentTime = 0;
 							this.endingSong = false;
-							return this.$refs.audioPlayer.play()
+							return this.$refs.audioPlayer.play();
 						}
 						if (isManual !== false) this.endingSong = false;
 						const source = this.getPlaybackSource();
@@ -844,7 +1242,7 @@
 							const randomInd = randomIndexes.indexOf(cur);
 							ind = randomIndexes[((randomInd < 0 ? -1 : randomInd) + 1) % randomIndexes.length];
 						}
-						this.playSong(ind, source.isSearch)
+						this._switchToPlaylistSourceThen(source, () => this.playSong(ind, source.isSearch));
 					},
 					seekTo(event) {
 						if (this.$refs.audioPlayer.duration) {
@@ -918,7 +1316,6 @@
 						this.currentSong.cover = cover || albumSbgImg;
 					},
 					async loadLyrics(song, isForce) {
-						// if (isForce && !confirm('确定要强制重新加载远程歌词吗？')) return;
 						song = song && song.raw ? song.raw : song;
 						if ((!song || !song.id || !song.source) && this.currIndSh >= 0 && this.currIndSh < this.searchResults.length) {
 							song = this.searchResults[this.currIndSh];
@@ -927,69 +1324,113 @@
 						const key = `${song.source}_${song.id}`;
 						const token = (this._lyricLoadToken = (this._lyricLoadToken || 0) + 1);
 						const cachedLyric = this.lyricHistory[key] || null;
+						// 切换歌词源：清空旧歌词，重新获取
 						if (isForce) {
-							// 手动切换歌词源：清空旧歌词，使用用户选择的源
+							this.lyrics = [];
+							this.currentLyricIndex = -1;
+							this.lyricsEnd = null;
+							this.lyricLoading = true;
+							this.lyricLoadingMsg = `正在从 ${this.currLyricSource} 搜索歌词...`;
+						} else if (this._lyricSongKey !== key) {
+							// 切歌：清空旧歌词
+							this._lyricSongKey = key;
 							this.lyrics = [];
 							this.currentLyricIndex = -1;
 							this.lyricsEnd = null;
 						}
+						// 非强制且有缓存：直接用缓存
 						if (cachedLyric && !isForce) {
 							if (this.currentSong.key && this.currentSong.key !== key) return;
 							return this.parseLyrics(cachedLyric);
 						}
 
 						try {
-							let lyric = null;
-							if (isForce) {
-								// 手动切换来源：静默请求选中源
-								lyric = await getSongLyric(song, this.currLyricSource, true);
-								if (this._lyricLoadToken !== token || (this.currentSong.key && this.currentSong.key !== key)) return;
-							} else if (this.isAList) {
-								// AList 模式仅使用本地 LRC 歌词
+						let lyric = null;
+						if (isForce) {
+							const cleanName = (song.name || '').replace(/\.[^./\\]+$/, '');
+							// 手动切换来源：同源用缓存，跨源先搜索获取目标源正确ID再取歌词
+							if (this.currLyricSource === song.source && !this.isAList) {
+								// 切回同源：用无后缀 key 命中自动模式缓存
 								lyric = await getSongLyric(song);
 							} else {
-								// 云模式：串行匹配歌词源，netease 优先（减少无效请求）
-								const songDuration = song.duration || 0;
-								const sources = ['netease', 'kuwo', 'tencent', 'kugou'];
-								let best = null, bestDiff = Infinity;
-								for (let i = 0; i < sources.length; i++) {
-									const ly = await getSongLyric(song, sources[i], true);
-									if (this._lyricLoadToken !== token || (this.currentSong.key && this.currentSong.key !== key)) return;
-									if (!ly) continue;
-									const lastTs = getLastLyricTimestamp(ly);
-									const diff = songDuration > 0 && lastTs > 0 ? Math.abs(lastTs - songDuration) : 0;
-									if (diff <= 5 && diff < bestDiff) { best = { source: sources[i], diff, lyric: ly }; bestDiff = diff; }
-									// netease 匹配成功(≤5s)时立即停止，不再请求其余源
-									if (i === 0 && diff <= 5) break;
-								}
-								// 都不符合则默认 netease，netease 没结果则取其他任意
-								if (!best) {
-									for (const s of sources) {
-										const cached = songAssetCache.lyric[`${song.source}_${song.id}_${s}`];
-										if (cached) { best = { source: s, diff: 0, lyric: cached }; break; }
-									}
-								}
-								lyric = best ? best.lyric : null;
-								if (lyric && best.source !== 'netease' && best.diff <= 5) {
-									const neteaseKey = `${song.source}_${song.id}_netease`;
-									this.lyricHistory[neteaseKey] && delete this.lyricHistory[neteaseKey];
+								// 跨源（含 AList→云源、云源→其他云源）：搜歌名获取目标源的正确ID
+								const sr = await requestMusicApi('search', this.currLyricSource, {
+									name: cleanName, count: 1
+								}, { timeout: 8000, isValid: d => Array.isArray(d) && d.length > 0 }).catch(() => null);
+								if (sr && sr.length) {
+									const m = sr[0];
+									lyric = await getSongLyric({ ...song, id: m.id, lyric_id: m.lyric_id || m.id, source: this.currLyricSource }, this.currLyricSource);
 								}
 							}
-							if (this._lyricLoadToken !== token || (this.currentSong.key && this.currentSong.key !== key)) return;
+							// 所选源未找到歌词，遍历其他源
+						if (!lyric) {
+							for (const source of this.lyricSources) {
+								if (source === this.currLyricSource) continue;
+								this.lyricLoadingMsg = `正在从 ${source} 搜索歌词...`;
+								const sr = await requestMusicApi('search', source, {
+									name: cleanName, count: 1
+								}, { timeout: 8000, isValid: d => Array.isArray(d) && d.length > 0 }).catch(() => null);
+								if (this._lyricLoadToken !== token || (this.currentSong.key && this.currentSong.key !== key)) { this.lyricLoading = false; return; }
+								if (sr && sr.length) {
+									const m = sr[0];
+									lyric = await getSongLyric({ ...song, id: m.id, lyric_id: m.lyric_id || m.id, source }, source);
+									if (lyric) { this.currLyricSource = source; break; }
+								}
+							}
+						}
+							if (this._lyricLoadToken !== token || (this.currentSong.key && this.currentSong.key !== key)) { this.lyricLoading = false; return; }
 							if (lyric) {
+								this.lyricLoading = false;
 								this.lyricHistory[key] = lyric;
 								setStorage(cacheKey.lyricHistory, this.lyricHistory);
 								this.parseLyrics(lyric);
+							} else {
+								this.lyricLoading = false;
+								this.lyrics = [];
+								this.showNotification('所有来源未找到此歌曲歌词', 'warning');
+							}
+							return;
+						}
+						// 自动模式：直接用歌曲所属源获取歌词，AList 无本地LRC则遍历各歌词源搜索
+						lyric = await getSongLyric(song);
+						if (this._lyricLoadToken !== token || (this.currentSong.key && this.currentSong.key !== key)) return;
+						// AList 无本地 LRC：自动遍历各歌词源搜索
+						if (!lyric && this.isAList) {
+							this.lyricLoading = true;
+							this.lyricLoadingMsg = '正在在线搜索歌词...';
+							const cleanName = (song.name || '').replace(/\.[^./\\]+$/, '');
+							for (const source of this.lyricSources) {
+								const sr = await requestMusicApi('search', source, {
+									name: cleanName, count: 1
+								}, { timeout: 8000, isValid: d => Array.isArray(d) && d.length > 0 }).catch(() => null);
+								if (this._lyricLoadToken !== token || (this.currentSong.key && this.currentSong.key !== key)) { this.lyricLoading = false; return; }
+								if (sr && sr.length) {
+									const m = sr[0];
+									lyric = await getSongLyric({ ...song, id: m.id, lyric_id: m.lyric_id || m.id, source }, source);
+									if (lyric) break;
+								}
+							}
+						}
+						if (this._lyricLoadToken !== token || (this.currentSong.key && this.currentSong.key !== key)) { this.lyricLoading = false; return; }
+							if (lyric) {
+								this.lyricLoading = false;
+								this.lyricHistory[key] = lyric;
+								setStorage(cacheKey.lyricHistory, this.lyricHistory);
+								this.parseLyrics(lyric);
+								// AList 无本地 lrc：自动上传在线歌词到服务器
+								if (this.isAList && !song.lyric && typeof doUploadLyricCore === 'function') {
+									doUploadLyricCore(song, lyric).catch(() => {});
+								}
 							} else if (cachedLyric) {
-								if (isForce) this.showNotification('该来源无此歌曲歌词，已还原', 'warning');
+								this.lyricLoading = false;
 								this.parseLyrics(cachedLyric);
 							} else {
-								this.showNotification(isForce ? '该来源无此歌曲歌词' : '歌词获取失败，可尝试手动刷新', 'warning');
+								this.lyricLoading = false;
 							}
 						} catch (e) {
 							console.error('获取歌词失败:', e);
+							this.lyricLoading = false;
 							if (cachedLyric && this._lyricLoadToken === token && (!this.currentSong.key || this.currentSong.key === key)) {
-								if (isForce) this.showNotification('获取歌词异常，已还原', 'warning');
 								this.parseLyrics(cachedLyric);
 							}
 						}
@@ -1204,10 +1645,15 @@
 					searchResults() {
 						this.tryRestorePlayback();
 					},
+					safeCoverUrl(url) {
+						if (this.lyricFull) this._fetchCoverColors(url);
+					},
 					lyricFull(val) {
 						if (!val) {
 							this.fullPlaylistVisible = false;
 							this.fullVolumeVisible = false;
+						} else {
+							this._fetchCoverColors(this.displayCoverUrl);
 						}
 						this.lyricSwitching = true;
 						const syncLyricPosition = () => {
