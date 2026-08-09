@@ -470,8 +470,9 @@ body {
 }
 
 .controls > button {
-    background: rgba(255, 255, 255, 0.7);
-    border: 1px solid rgba(0, 0, 0, 0.04);
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid rgba(23, 32, 50, 0.12);
+    box-shadow: 0 1px 4px rgba(23, 32, 50, 0.08);
     cursor: pointer;
     width: 42px;
     height: 42px;
@@ -529,8 +530,9 @@ body {
 }
 
 .mode-btn {
-    background: rgba(255, 255, 255, 0.7);
-    border: 1px solid rgba(0, 0, 0, 0.04);
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid rgba(23, 32, 50, 0.12);
+    box-shadow: 0 1px 4px rgba(23, 32, 50, 0.08);
     cursor: pointer;
     width: 42px;
     height: 42px;
