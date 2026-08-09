@@ -79,6 +79,8 @@ class MusicPlayer {
         this.lyrics = [];
         this.sourceToken = 0; // 切歌令牌：丢弃过期降级任务的异步结果，防止覆盖新歌
         this.failToken = null; // 失败提示去重：同一首歌只提示一次"播放失败"
+        this._degrading = false; // 降级流程进行中：error 延迟验证不误报
+        this._errorTimer = null; // error 延迟验证定时器
         
         // 播放模式：sequential(顺序) / shuffle(随机) / loop(循环)，刷新后保留上次选择
         this.playMode = this.loadPlayMode();
@@ -109,9 +111,21 @@ class MusicPlayer {
         this.audio.addEventListener('ended', () => this.nextSong(true));
         // 音频加载完成：结束封面加载态
         this.audio.addEventListener('loadeddata', () => this.cover.classList.remove('loading'));
-        // 播放中出错（如网络中断）：统一失败提示（按歌去重）
+        // 音频真正开始播放：同步 UI 状态（降级恢复播放后不再残留"播放失败"态）
+        this.audio.addEventListener('playing', () => {
+            this.isPlaying = true;
+            this.playBtn.innerHTML = '<i class="ri-pause-fill"></i>';
+            this.failToken = null; // 播放已恢复，允许后续失败重新提示
+        });
+        // 播放中出错（如网络中断）：延迟验证，给降级流程留出恢复时间，避免误报
         this.audio.addEventListener('error', () => {
-            if (this.isPlaying) this.showPlayFail();
+            clearTimeout(this._errorTimer);
+            this._errorTimer = setTimeout(() => {
+                // 降级流程进行中或音频已恢复播放时忽略
+                if (this.isPlaying && this.audio.paused && !this._degrading) {
+                    this.showPlayFail();
+                }
+            }, 800);
         });
         
         // 解析歌单事件
@@ -510,12 +524,20 @@ class MusicPlayer {
         if (token !== this.sourceToken) return; // 已切歌，丢弃过期结果
         this.cover.classList.remove('loading'); // 降级探测结束，结束封面加载态
         if (!playUrl) {
-            // 主、备用接口均失败：仅当正在播放时才提示
+            // 主、备用接口均探测失败：若音频实际已在播放（探测误判），静默保留当前播放
+            if (this.isPlaying && !this.audio.paused && this.audio.readyState >= 2) {
+                return;
+            }
+            // 仅当正在播放时才提示
             if (this.isPlaying) this.showPlayFail();
             return;
         }
         if (playUrl !== this.audio.getAttribute('src')) {
             this.audio.src = playUrl;
+            // 替换 src 会中断当前播放，若处于播放态则恢复播放
+            if (this.isPlaying) {
+                this.audio.play().catch(() => {});
+            }
         }
     }
     
@@ -714,16 +736,21 @@ class MusicPlayer {
             this.showPlayFail();
             return;
         }
-        const playUrl = await this.ensurePlayUrl(song);
-        if (token !== this.sourceToken) return; // 已切歌，丢弃过期结果
-        this.cover.classList.remove('loading');
-        if (!playUrl) {
-            // 主、备用接口均失败：统一提示（按歌去重）
-            this.showPlayFail();
-            return;
+        this._degrading = true; // 降级流程进行中：error 延迟验证不再误报
+        try {
+            const playUrl = await this.ensurePlayUrl(song);
+            if (token !== this.sourceToken) return; // 已切歌，丢弃过期结果
+            this.cover.classList.remove('loading');
+            if (!playUrl) {
+                // 主、备用接口均失败：统一提示（按歌去重）
+                this.showPlayFail();
+                return;
+            }
+            this.audio.src = playUrl;
+            this.audio.play().catch(() => this.showPlayFail());
+        } finally {
+            this._degrading = false;
         }
-        this.audio.src = playUrl;
-        this.audio.play().catch(() => this.showPlayFail());
     }
     
     async playSong(index) {
