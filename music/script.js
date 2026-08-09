@@ -504,14 +504,15 @@ class MusicPlayer {
         const mainUrl = (song.url || '').replace(/^http:\/\//i, 'https://');
         const songId = this.extractSongId(song);
         
-        if (mainUrl && await this.probePlayable(mainUrl)) {
+        // 主接口探测 3s 内返回，避免接口挂起拖慢降级
+        if (mainUrl && await this.probePlayable(mainUrl, 3000)) {
             return mainUrl; // 主接口正常：仅调用主接口
         }
         
         // 2) 备用播放接口：传入相同音乐 ID，接口切换过程静默、不提示用户
         if (songId) {
-            const backupUrl = await this.fetchBackupPlayUrl(songId);
-            if (backupUrl && await this.probePlayable(backupUrl)) {
+            const backupUrl = await this.getBackupPlayUrl(songId);
+            if (backupUrl && await this.probePlayable(backupUrl, 2000)) {
                 return backupUrl;
             }
         }
@@ -591,30 +592,56 @@ class MusicPlayer {
     }
     
     /**
-     * 备用播放接口（多源依次尝试，传入相同音乐 ID 获取播放链接）：
+     * 备用播放接口（多源并行，谁先返回有效用谁）：
      * 1) ncm-api 播放链接接口（unblock=true，无需 Cookie）
      * 2) meting type=song 接口（与示例网页接口规范一致）
      */
     async fetchBackupPlayUrl(songId) {
         if (!songId) return '';
-        // 1) ncm-api 鉴权直链接口
-        try {
-            const authUrl = await this.fetchNcmApiPlayUrl(songId);
-            if (authUrl) return authUrl;
-        } catch (error) {
-            console.error('ncm-api 备用接口请求失败:', error);
+        const results = await Promise.allSettled([
+            this.fetchNcmApiPlayUrl(songId),
+            this.fetchMetingPlayUrl(songId)
+        ]);
+        for (const r of results) {
+            if (r.status === 'fulfilled' && r.value) return r.value;
         }
-        // 2) meting type=song 备用接口
+        return '';
+    }
+
+    /**
+     * 获取备用播放链接（带 Promise 缓存）：
+     * 同一首歌的请求结果共享，避免 runSourceFallback 与 fallbackAndPlay 并发时重复请求
+     */
+    getBackupPlayUrl(songId) {
+        if (!songId) return Promise.resolve('');
+        if (this._backupSongId === songId && this._backupPromise) {
+            return this._backupPromise;
+        }
+        this._backupSongId = songId;
+        this._backupPromise = this.fetchBackupPlayUrl(songId).finally(() => {
+            this._backupPromise = null;
+            this._backupSongId = null;
+        });
+        return this._backupPromise;
+    }
+
+    /** meting type=song 备用接口（4s 超时） */
+    async fetchMetingPlayUrl(songId) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 4000);
         try {
             const response = await fetch(
-                `https://api.qijieya.cn/meting/?server=netease&type=song&id=${songId}`
+                `https://api.qijieya.cn/meting/?server=netease&type=song&id=${songId}`,
+                { signal: controller.signal }
             );
             const data = await response.json();
             if (!Array.isArray(data) || !data.length) return '';
-            return data[0].url || '';
+            return String(data[0].url || '').replace(/^http:\/\//i, 'https://');
         } catch (error) {
-            console.error('备用播放接口请求失败:', error);
+            console.error('meting 备用播放接口请求失败:', error);
             return '';
+        } finally {
+            clearTimeout(timer);
         }
     }
     
@@ -641,15 +668,25 @@ class MusicPlayer {
         if (!songId) return '';
         const { level } = this.getPlayConfig();
         const params = new URLSearchParams({ id: songId, level, unblock: 'true' });
-        const response = await fetch(
-            `https://ncm-api.prod.gbclstudio.cn/song/url/v1?${params.toString()}`
-        );
-        if (!response.ok) return '';
-        const data = await response.json();
-        const url = data && data.data && data.data[0] ? data.data[0].url : '';
-        if (!url) return '';
-        // http → https
-        return url.replace(/^http:\/\//i, 'https://');
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 4000); // 4s 超时，避免接口挂起拖慢降级
+        try {
+            const response = await fetch(
+                `https://ncm-api.prod.gbclstudio.cn/song/url/v1?${params.toString()}`,
+                { signal: controller.signal }
+            );
+            if (!response.ok) return '';
+            const data = await response.json();
+            const url = data && data.data && data.data[0] ? data.data[0].url : '';
+            if (!url) return '';
+            // http → https
+            return url.replace(/^http:\/\//i, 'https://');
+        } catch (error) {
+            console.error('ncm-api 播放链接请求失败:', error);
+            return '';
+        } finally {
+            clearTimeout(timer);
+        }
     }
     
     parseLyric(lrcText) {
@@ -743,7 +780,10 @@ class MusicPlayer {
         }
         this._degrading = true; // 降级期间屏蔽 error 误报；由 playing 事件或失败路径解除
         try {
-            const playUrl = await this.ensurePlayUrl(song);
+            // play() 已失败说明主 URL 不可播，跳过主 URL 探测，
+            // 直接并行获取备用链接并播放，大幅缩短降级等待时间
+            const songId = this.extractSongId(song);
+            const playUrl = songId ? await this.getBackupPlayUrl(songId) : '';
             if (token !== this.sourceToken) {
                 this._degrading = false; // 已切歌，丢弃过期结果并解除降级标记
                 return;
