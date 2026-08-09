@@ -106,7 +106,7 @@ class MusicPlayer {
         
         // 音频事件
         this.audio.addEventListener('timeupdate', () => this.updateProgress());
-        this.audio.addEventListener('ended', () => this.nextSong());
+        this.audio.addEventListener('ended', () => this.nextSong(true));
         // 音频加载完成：结束封面加载态
         this.audio.addEventListener('loadeddata', () => this.cover.classList.remove('loading'));
         // 播放中出错（如网络中断）：统一失败提示（按歌去重）
@@ -247,11 +247,16 @@ class MusicPlayer {
     }
     
     /**
-     * 根据当前播放模式计算下一首索引；返回 -1 表示播放结束（顺序模式播完最后一首）
+     * 根据当前播放模式计算下一首索引；返回 -1 表示播放结束（顺序模式自动播完最后一首）
+     * fromAuto=true 表示由音频自然播放结束触发（区分手动切歌）
      */
-    getNextIndex() {
+    getNextIndex(fromAuto = false) {
         if (this.playMode === 'sequential') {
-            return this.currentIndex >= this.songs.length - 1 ? -1 : this.currentIndex + 1;
+            // 手动点击下一首：最后一首后循环回第一首；自动播完：末尾停止
+            if (this.currentIndex >= this.songs.length - 1) {
+                return fromAuto ? -1 : 0;
+            }
+            return this.currentIndex + 1;
         }
         if (this.playMode === 'shuffle') {
             return this.nextShuffleIndex();
@@ -737,13 +742,15 @@ class MusicPlayer {
         if (!this.songs.length) return;
         this.currentIndex = this.getPrevIndex();
         await this.loadSong();
+        // 手动切歌：暂停状态下也自动开始播放
+        if (!this.isPlaying) this.togglePlay();
     }
     
-    async nextSong() {
+    async nextSong(fromAuto = false) {
         if (!this.songs.length) return;
-        const nextIndex = this.getNextIndex();
+        const nextIndex = this.getNextIndex(fromAuto);
         if (nextIndex === -1) {
-            // 顺序播放：已到列表最后一首，停止播放
+            // 顺序模式自动播放到最后一首：停止播放
             this.audio.pause();
             this.audio.currentTime = 0;
             this.playBtn.innerHTML = '<i class="ri-play-fill"></i>';
@@ -752,6 +759,8 @@ class MusicPlayer {
         }
         this.currentIndex = nextIndex;
         await this.loadSong();
+        // 手动切歌：暂停状态下也自动开始播放
+        if (!this.isPlaying) this.togglePlay();
     }
     
     updateProgress() {
