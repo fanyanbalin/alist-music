@@ -468,6 +468,11 @@ class MusicPlayer {
         // （http 统一转 https，避免 https 页面混合内容被浏览器拦截）
         this.audio.src = (song.url || '').replace(/^http:\/\//i, 'https://');
         this.runSourceFallback(song, token);
+        // 并行预取备用链接：主 URL 播放失败时备用已就绪/在途，缩短降级等待时间
+        const songId = this.extractSongId(song);
+        if (songId) {
+            this.getBackupPlayUrl(songId, song.url || '');
+        }
         
         // 同步播放列表高亮并滚动定位到当前播放歌曲
         this.syncPlaylistActive();
@@ -505,8 +510,8 @@ class MusicPlayer {
         const mainUrl = (song.url || '').replace(/^http:\/\//i, 'https://');
         const songId = this.extractSongId(song);
         
-        // 主接口探测 3s 内返回，避免接口挂起拖慢降级
-        if (mainUrl && await this.probePlayable(mainUrl, 3000)) {
+        // 主接口探测 2s 内返回：快速判定主 URL 不可播，尽早进入降级
+        if (mainUrl && await this.probePlayable(mainUrl, 2000)) {
             return mainUrl; // 主接口正常：仅调用主接口
         }
         
@@ -689,10 +694,10 @@ class MusicPlayer {
         }
     }
 
-    /** meting type=song 备用接口（8s 超时） */
+    /** meting type=song 备用接口（6s 超时） */
     async fetchMetingPlayUrl(songId) {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 8000);
+        const timer = setTimeout(() => controller.abort(), 6000);
         try {
             const response = await fetch(
                 `https://api.qijieya.cn/meting/?server=netease&type=song&id=${songId}`,
@@ -732,9 +737,9 @@ class MusicPlayer {
         if (!songId) return '';
         const { level } = this.getPlayConfig();
         const params = new URLSearchParams({ id: songId, level, unblock: 'true' });
-        // 12s 超时：浏览器环境下该接口响应较慢，过短会误判失败
+        // 6s 超时：备用接口最多等待 6s，超时视为该源不可用
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 12000);
+        const timer = setTimeout(() => controller.abort(), 6000);
         try {
             const response = await fetch(
                 `https://ncm-api.prod.gbclstudio.cn/song/url/v1?${params.toString()}`,
