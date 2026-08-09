@@ -100,11 +100,18 @@ function handleSongs(songs) {
 }
 
 // let urlObj = Object.fromEntries(new URLSearchParams(location.search))
-window.isAList = getStorageExp('dm_siteType') == 'alist';
+window.isAList = getStorageExp('dm_siteType') == 'alist' || !!new URLSearchParams(location.search).get('alist');
 (async function() {
 	if (!isAList) return; // ?t=a  开启AList
-
+	toggleLoading(true);
+	try {
+	// 支持 URL 参数配置：?alist=域名|路径|用户名|密码（便于部署与调试，配置会持久化）
+	const urlAlist = new URLSearchParams(location.search).get('alist');
 	window.alist = await getStorage('alist_config')
+	if (!alist && urlAlist) {
+		alist = urlAlist.split('|')
+		if (alist.length == 4) setStorage('alist_config', alist)
+	}
 	if (!alist) {
 		alist = (prompt('请输入alist: alist域名|音乐绝对路径|username|password',
 			'https://alist.xyf111.top|/music|admin|admin') || '').split('|')
@@ -123,7 +130,7 @@ window.isAList = getStorageExp('dm_siteType') == 'alist';
 	}) => data)
 	if (!AList.getToken()) {
 		let token = await AList.getApiToken()
-		if (!token) return showNotification('登录失败，无法获取AList Token', 'error');
+		if (!token) return showNotification('登录失败，无法获取AList Token，请检查地址与账号密码', 'error');
 		setStorageExp(tokenCacheKey, token, 24 * 60 * 60)
 	}
 	request.defaults.headers['Authorization'] = AList.getToken()
@@ -131,7 +138,7 @@ window.isAList = getStorageExp('dm_siteType') == 'alist';
 	window.musicList = await getStorage(musicListCacheKey)
 	if (!musicList) {
 		let songs = await AList.listAllSong(alist[1])
-		if (!songs || !songs.length) return showNotification('获取音乐列表失败', 'error');
+		if (!songs || !songs.length) return showNotification('获取音乐列表失败，请检查音乐路径', 'error');
 		handleSongs(songs);
 		console.log(songs);
 		musicList = songs.filter(item => item.m)
@@ -179,8 +186,11 @@ window.isAList = getStorageExp('dm_siteType') == 'alist';
 			if (app.isPlaySearch) app.randomIndexes = genRandomIndexes(app.searchResults.length)
 		})
 	}, 200)
+	} finally {
+		toggleLoading();
+	}
 })()
-window.lyricSources = ['netease', 'kuwo', 'tencent', 'kugou', 'joox', 'migu', 'spotify', 'deezer']
+window.lyricSources = ['netease']
 window.currLyricSource = 0
 if (isAList) {
 	setTimeout(() => withVueApp(app => {
@@ -209,8 +219,24 @@ if (isAList) {
 	}
 	window.getSongUrl = async function(song, br) {
 		try {
-			const res = await AList.getFileInfo(`${song.path}/${song.name}`);
-			let url = res.data?.raw_url || null;
+			let res = await AList.getFileInfo(`${song.path}/${song.name}`);
+			let info = (res && res.data) || {};
+			// token 失效（401/403）导致获取失败时，重新登录并重试一次
+			if ((!info || !info.name) && (res.code === 401 || res.code === 403)) {
+				const tokenKey = getAListScopeKey('alist_token');
+				setStorageExp(tokenKey, null);
+				const token = await AList.getApiToken();
+				if (!token) return null;
+				setStorageExp(tokenKey, token, 24 * 60 * 60);
+				request.defaults.headers['Authorization'] = token;
+				res = await AList.getFileInfo(`${song.path}/${song.name}`);
+				info = (res && res.data) || {};
+			}
+			let url = info.raw_url || null;
+			// AList 未配置直链(raw_url 为空)时，使用签名下载链接 /p{path}?sign=
+			if (!url && info && info.sign) {
+				url = `${AListUrl}/p${song.path}/${song.name}?sign=${encodeURIComponent(info.sign)}&alist_ts=${Date.now()}`;
+			}
 			if (url && location.protocol === 'https:' && /^http:/.test(url)) {
 				url = url.replace(/^http:/, 'https:');
 			}
@@ -220,34 +246,6 @@ if (isAList) {
 			return null;
 		}
 	}
-	// Netease备用歌词接口
-	const NETEASE_BACKUP_API = 'https://musicapi.fanyanbalin.dpdns.org';
-	window.fetchNeteaseBackupLyric = async function(id, timeout = 8000) {
-		try {
-			const res = await Promise.race([
-				fetch(`${NETEASE_BACKUP_API}/lyric?id=${encodeURIComponent(id)}`),
-				new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), timeout))
-			]);
-			const data = await res.json();
-			// 处理多种可能的返回格式
-			let lyricText = null;
-			if (typeof data === 'string') {
-				lyricText = data;
-			} else if (data.lrc && data.lrc.lyric) {
-				lyricText = data.lrc.lyric;
-			} else if (data.lyric) {
-				lyricText = data.lyric;
-			} else if (data.data && data.data.lyric) {
-				lyricText = data.data.lyric;
-			} else if (data.data && data.data.lrc && data.data.lrc.lyric) {
-				lyricText = data.data.lrc.lyric;
-			}
-			return lyricText;
-		} catch (e) {
-			console.warn('备用歌词接口请求失败:', e);
-			return null;
-		}
-	};
 	// 保存 utils.js 的云模式 getSongLyric，AList 版本由内部逻辑路由
 	const _cloudGetSongLyric = window.getSongLyric;
 	window.getSongLyric = async function(song, specificSource) {
@@ -261,11 +259,12 @@ if (isAList) {
 		songAssetCache.lyricReq[key] = (async function() {
 		try {
 			const { data } = await AList.getFileInfo(song.lyric);
-			if (!data.raw_url) return null;
+			// 依赖签名而非 raw_url：raw_url 可能是空（未配置直链），签名下载始终可用
+			if (!data || !data.sign) return null;
 			const lyric = await AList.getRawFile(song.lyric, {
 				sign: data.sign,
 				alist_ts: Date.now()
-			}).then(res => res.message ? null : res);
+			}).then(res => res && res.message ? null : res);
 			if (lyric) songAssetCache.lyric[key] = lyric;
 			return lyric;
 		} catch (e) {
@@ -340,40 +339,28 @@ if (isAList) {
 		if (songAssetCache.coverReq[key]) return songAssetCache.coverReq[key];
 		songAssetCache.coverReq[key] = (async function() {
 		try {
-			const fetchJson = (url, timeout = 8000) => Promise.race([
-				fetch(url).then(res => res.json()),
-				new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), timeout))
-			]);
-			const sources = ['netease', 'kuwo', 'tencent', 'kugou'];
 			const fileName = getFileName(song.name).trim();
 			const keywords = [fileName];
 			const splitName = fileName.split(/\s+-\s+/).pop().trim();
 			if (splitName && splitName !== fileName) keywords.push(splitName);
 
 			for (const keyword of keywords) {
-				for (const source of sources) {
-					try {
-						const results = await fetchJson(
-							`${API_BASE}?types=search&source=${source}&name=${encodeURIComponent(keyword)}&count=5`
-						) || [];
-						for (const item of results) {
-							if (!item.pic_id) continue;
-							const data = await fetchJson(
-								`${API_BASE}?types=pic&source=${source}&id=${encodeURIComponent(item.pic_id)}&size=${size}`
-							);
-							let url = (data || {}).url;
-							if (!url) continue;
-							if (location.protocol === 'https:' && /^http:/.test(url)) {
-								url = url.replace(/^http:/, 'https:');
-							}
-							songAssetCache.cover[key] = url + `?param=${size}y${size}`;
-							songAssetCache.coverStore[key] = songAssetCache.cover[key];
-							setStorage(cacheKey.coverHistory, songAssetCache.coverStore);
-							return songAssetCache.cover[key];
+				try {
+					const results = await window.getNetEaseSearch(keyword, 5) || [];
+					for (const item of results) {
+						if (!item.pic) continue;
+						let url = item.pic;
+						if (location.protocol === 'https:' && /^http:/.test(url)) {
+							url = url.replace(/^http:/, 'https:');
 						}
-					} catch (e) {
-						console.warn('获取封面失败:', source, keyword, e);
+						url += `${url.includes('?') ? '&' : '?'}param=${size}y${size}`;
+						songAssetCache.cover[key] = url;
+						songAssetCache.coverStore[key] = url;
+						setStorage(cacheKey.coverHistory, songAssetCache.coverStore);
+						return url;
 					}
+				} catch (e) {
+					console.warn('获取封面失败:', keyword, e);
 				}
 			}
 		} catch (e) {
@@ -387,6 +374,7 @@ if (isAList) {
 		return songAssetCache.coverReq[key];
 	}
 	window.searchMusicBind = async function(keyword, source) {
+		if (!keyword || !keyword.trim()) return showNotification('请输入搜索关键词', 'warning');
 		this.searchResults = musicList.filter(item => item.name.toLowerCase().includes(keyword.toLowerCase()) ||
 			item.path.toLowerCase().includes(keyword.toLowerCase()))
 		if (!this.searchResults.length) {
@@ -394,24 +382,29 @@ if (isAList) {
 		}
 	}
 	window.refreshBind = async function() {
-		console.log(this);
 		if (!confirm('确定重新刷新列表吗')) return;
-		let songs = await AList.listAllSong(alist[1])
-		if (!songs || !songs.length) return showNotification('获取音乐列表失败', 'error');
-		handleSongs(songs);
-		console.log(songs);
-		musicList = songs.filter(item => item.m)
-		setStorage(getAListScopeKey('alist_MusicList'), musicList)
-		withVueApp(app => {
-			app.searchResults = musicList
-			if (app.playList && app.playList.length) {
-				app.playList.forEach(item => {
-					const one = musicList.find(x => x.id == item.id)
-					if (one) item.lyric = one.lyric
-				})
-				setStorage(cacheKey.playList, app.playList)
-			}
-		})
+		toggleLoading(true);
+		try {
+			let songs = await AList.listAllSong(alist[1])
+			if (!songs || !songs.length) return showNotification('获取音乐列表失败', 'error');
+			handleSongs(songs);
+			console.log(songs);
+			musicList = songs.filter(item => item.m)
+			setStorage(getAListScopeKey('alist_MusicList'), musicList)
+			withVueApp(app => {
+				app.searchResults = musicList
+				if (app.playList && app.playList.length) {
+					app.playList.forEach(item => {
+						const one = musicList.find(x => x.id == item.id)
+						if (one) item.lyric = one.lyric
+					})
+					setStorage(cacheKey.playList, app.playList)
+				}
+			})
+			showNotification(`列表已刷新，共 ${musicList.length} 首`, 'success');
+		} finally {
+			toggleLoading();
+		}
 	}
 	window.sourceChangeBind = async function() {
 		console.log('sourceChangeBind', this);

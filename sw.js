@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'dmusic-static-v1';
+const CACHE_VERSION = 'dmusic-static-v4';
 const STATIC_ASSETS = [
 	'./',
 	'./index.html',

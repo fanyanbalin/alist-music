@@ -214,7 +214,6 @@ html.edge-perf .song-item:hover {
 	color: #fff;
 	font-size: 16px;
 	outline: none;
-	filter: brightness(6);
 }
 
 .source-select {
@@ -243,6 +242,10 @@ html.edge-perf .song-item:hover {
 
 .search-btn:hover {
 	background: #ff5252;
+}
+
+.search-btn:active {
+	transform: scale(0.96);
 }
 
 .main-container {
@@ -315,6 +318,15 @@ html.edge-perf .song-item:hover {
 .tab-btn:hover {
 	background: rgba(255, 255, 255, 0.2);
 	color: #fff;
+}
+
+.tab-btn:active {
+	transform: scale(0.95);
+}
+
+.tab-btn:focus-visible {
+	outline: 2px solid #ff6b6b;
+	outline-offset: 2px;
 }
 
 .tab-btn.active {
@@ -647,6 +659,19 @@ html.edge-perf .song-item:hover {
 	transform: scale(1.1);
 }
 
+.control-btn:active {
+	transform: scale(0.92);
+}
+
+.control-btn:focus-visible,
+.search-btn:focus-visible,
+.quality-select:focus-visible,
+.source-select:focus-visible,
+.download-btn:focus-visible {
+	outline: 2px solid #ff6b6b;
+	outline-offset: 2px;
+}
+
 .control-btn.small {
 	width: 45px;
 	height: 45px;
@@ -730,6 +755,7 @@ html.edge-perf .song-item:hover {
 	outline: none;
 	cursor: pointer;
 	-webkit-appearance: none;
+	-moz-appearance: none;
 }
 
 .volume-slider::-webkit-slider-thumb {
@@ -739,6 +765,21 @@ html.edge-perf .song-item:hover {
 	background: #ff6b6b;
 	border-radius: 50%;
 	cursor: pointer;
+}
+
+.volume-slider::-moz-range-thumb {
+	width: 14px;
+	height: 14px;
+	background: #ff6b6b;
+	border-radius: 50%;
+	border: none;
+	cursor: pointer;
+}
+
+.volume-slider::-moz-range-track {
+	height: 4px;
+	background: rgba(255, 255, 255, 0.2);
+	border-radius: 2px;
 }
 
 .quality-container {
@@ -1718,6 +1759,27 @@ html.edge-perf .song-item:hover {
 
 
 
+@media (max-width: 1280px) and (min-width: 769px) {
+	.main-container {
+		grid-template-columns: 1.6fr 1.8fr 1.4fr;
+		gap: 16px;
+		padding: 16px;
+	}
+
+	.current-cover {
+		width: 150px;
+		height: 150px;
+	}
+
+	.nav-container {
+		padding: 0 16px;
+	}
+
+	.search-container {
+		margin: 0 16px;
+	}
+}
+
 @media (max-width: 1024px) {
 	.lyrics-section.full {
 		padding: 60px 22px 132px;
@@ -1812,6 +1874,19 @@ html.edge-perf .song-item:hover {
 }
 
 @media (max-width: 768px) {
+	html, body {
+		height: auto;
+		overflow: auto;
+	}
+
+	#app {
+		min-height: 100dvh;
+	}
+
+	.main-container {
+		overflow: visible;
+	}
+
 	.navbar {
 		padding: 6px 0;
 	}
@@ -1860,8 +1935,8 @@ html.edge-perf .song-item:hover {
 	}
 
 	.content-section {
-		min-height: 40vh;
-		max-height: 54vh;
+		min-height: auto;
+		max-height: none;
 	}
 
 	.current-cover {
@@ -1924,11 +1999,14 @@ html.edge-perf .song-item:hover {
 	}
 
 	.list-section {
-		height: 70vh;
+		height: auto;
+		min-height: 50vh;
 	}
 
 	.lyrics-section {
-		height: 50vh;
+		height: auto;
+		min-height: 45vh;
+		max-height: 70vh;
 	}
 
 	.flt-tool {
