@@ -81,6 +81,7 @@ class MusicPlayer {
         this.failToken = null; // 失败提示去重：同一首歌只提示一次"播放失败"
         this._degrading = false; // 降级流程进行中：error 延迟验证不误报
         this._errorTimer = null; // error 延迟验证定时器
+        this._playStarted = false; // 当前歌曲是否已真正开始播放（playing 事件）
         
         // 播放模式：sequential(顺序) / shuffle(随机) / loop(循环)，刷新后保留上次选择
         this.playMode = this.loadPlayMode();
@@ -113,16 +114,19 @@ class MusicPlayer {
         this.audio.addEventListener('loadeddata', () => this.cover.classList.remove('loading'));
         // 音频真正开始播放：同步 UI 状态（降级恢复播放后不再残留"播放失败"态）
         this.audio.addEventListener('playing', () => {
+            this._degrading = false; // 音频真正开始播放：解除降级标记
+            this._playStarted = true;
             this.isPlaying = true;
             this.playBtn.innerHTML = '<i class="ri-pause-fill"></i>';
             this.failToken = null; // 播放已恢复，允许后续失败重新提示
         });
-        // 播放中出错（如网络中断）：延迟验证，给降级流程留出恢复时间，避免误报
+        // 播放中出错（如网络中断）：延迟验证，仅在音频从未成功播放、不在降级流程、
+        // 且无可用数据时才提示失败，避免降级缓冲期间误报
         this.audio.addEventListener('error', () => {
             clearTimeout(this._errorTimer);
             this._errorTimer = setTimeout(() => {
-                // 降级流程进行中或音频已恢复播放时忽略
-                if (this.isPlaying && this.audio.paused && !this._degrading) {
+                if (this.isPlaying && this.audio.paused && !this._degrading &&
+                    !this._playStarted && this.audio.readyState === 0) {
                     this.showPlayFail();
                 }
             }, 800);
@@ -446,6 +450,7 @@ class MusicPlayer {
         const song = this.songs[this.currentIndex];
         this.sourceToken++; // 递增切歌令牌，使旧降级任务的结果失效
         const token = this.sourceToken;
+        this._playStarted = false; // 新歌尚未真正开始播放
         
         this.songName.textContent = song.title || song.name;
         this.artistName.textContent = song.author || song.artist;
@@ -736,19 +741,28 @@ class MusicPlayer {
             this.showPlayFail();
             return;
         }
-        this._degrading = true; // 降级流程进行中：error 延迟验证不再误报
+        this._degrading = true; // 降级期间屏蔽 error 误报；由 playing 事件或失败路径解除
         try {
             const playUrl = await this.ensurePlayUrl(song);
-            if (token !== this.sourceToken) return; // 已切歌，丢弃过期结果
+            if (token !== this.sourceToken) {
+                this._degrading = false; // 已切歌，丢弃过期结果并解除降级标记
+                return;
+            }
             this.cover.classList.remove('loading');
             if (!playUrl) {
                 // 主、备用接口均失败：统一提示（按歌去重）
+                this._degrading = false;
                 this.showPlayFail();
                 return;
             }
             this.audio.src = playUrl;
-            this.audio.play().catch(() => this.showPlayFail());
-        } finally {
+            this.audio.play().catch(() => {
+                this._degrading = false;
+                this.showPlayFail();
+            });
+            // 注意：play() 成功后不立即解除 _degrading，等 playing 事件（音频真正开始播放）
+            // 再解除，避免备用 URL 缓冲期间 error 定时器误报"播放失败"
+        } catch (error) {
             this._degrading = false;
         }
     }
