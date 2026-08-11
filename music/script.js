@@ -1,19 +1,16 @@
 /* ============================================================
-   播放配置（level 读取自 config.js）
-   ============================================================ */
+   音乐播放器（纯前端单页应用）
+   ============================================================
+   功能模块：
+   - MusicPlayer：播放核心——歌单解析、播放控制、三种播放模式
+     （顺序/随机/单曲循环）、歌词滚动、失败降级重试、播放链接缓存与预取
+   - PlaylistBrowser：歌单浏览弹窗——分类与歌单列表浏览，选中歌单后
+     交由 MusicPlayer 解析并播放
 
-// 音质等级合法值（ncm-api /song/url/v1 接口支持）
-const PLAY_LEVELS = [
-    'standard',   // 标准
-    'higher',     // 较高
-    'exhigh',     // 极高
-    'lossless',   // 无损
-    'hires',      // Hi-Res
-    'jyeffect',   // 高清环绕声
-    'sky',        // 沉浸环绕声
-    'dolby',      // 杜比全景声
-    'jymaster'    // 超清母带
-];
+   API 分层（域名见 config.js）：
+   - apiBase（meting-api）：歌单解析 / 播放链接 / 歌词 / 封面
+   - playlistApiBase（ncm-api）：弹窗的分类 / 歌单列表
+   ============================================================ */
 
 // Toast 类型 → remixicon 图标名映射
 const TOAST_ICONS = {
@@ -22,11 +19,9 @@ const TOAST_ICONS = {
     info: 'information'
 };
 
-// 默认播放配置：config.js 缺失或字段非法时的兜底值
-const DEFAULT_PLAY_CONFIG = {
-    level: 'exhigh'
-};
-
+/**
+ * 播放器核心：管理歌曲列表、播放状态机与三种播放模式
+ */
 class MusicPlayer {
     constructor() {
         this.initElements();
@@ -69,6 +64,10 @@ class MusicPlayer {
         
         // Toast容器
         this.toastContainer = document.querySelector('.toast-container');
+        
+        // 下一首音频预加载元素：预热 CDN 连接与音频头部（metadata 模式），加快切歌
+        this._preloadAudio = new Audio();
+        this._preloadAudio.preload = 'metadata';
     }
     
     initState() {
@@ -82,17 +81,34 @@ class MusicPlayer {
         this._degrading = false; // 降级流程进行中：error 延迟验证不误报
         this._errorTimer = null; // error 延迟验证定时器
         this._playStarted = false; // 当前歌曲是否已真正开始播放（playing 事件）
-        this._backupFromCache = false; // 当前备用链接是否来自本地缓存（失效时清除重试）
+        this._backupFromCache = false; // 当前播放链接是否来自本地缓存（失效时清除重试）
+        this._preloadDone = false; // 当前歌曲的下一首是否已预加载（幂等）
         
-        // 播放模式：sequential(顺序) / shuffle(随机) / loop(循环)，刷新后保留上次选择
+        // 播放模式：sequential(顺序/列表循环) / shuffle(随机) / loop(单曲循环)，刷新后保留上次选择
         this.playMode = this.loadPlayMode();
         this.shuffleOrder = []; // 随机模式播放序列（无重复）
         this.shuffleCursor = 0; // 随机序列当前游标
         this.modeMenuOpen = false;
+
+        // meting 解析请求节流：串行执行 + 最小间隔，避免快速切歌时短时间突发请求
+        // 触发服务端限流(429)。服务端滥用防护配置为 60 秒窗口最多 120 个请求
+        // （平均每 500ms 1 个），客户端节流取 600ms 间隔（60 秒内 ≤ 101 个），
+        // 预留窗口边界余量，防止恰好卡线触发封禁
+        this._metingQueue = Promise.resolve();
+        this._metingLastTs = 0;
+        this._metingMinGap = 600; // 两个解析请求的最小间隔（ms）
+
+        // meting 主备接口：主接口限流(429)时自动轮换到备用接口（首次 getApiBase 时载入）
+        this._apiBases = [];
+        this._activeApiIdx = 0;
+
+        // 当前歌曲列表的音乐平台（播放/歌词/封面解析据此请求），默认网易云
+        this.currentPlatform = 'netease';
     }
     
     /**
      * 从 localStorage 读取持久化的播放模式，非法值回退为顺序播放
+     * @returns {'sequential'|'shuffle'|'loop'} 播放模式
      */
     loadPlayMode() {
         const saved = localStorage.getItem('playMode');
@@ -112,7 +128,7 @@ class MusicPlayer {
         this.audio.addEventListener('timeupdate', () => this.updateProgress());
         this.audio.addEventListener('ended', () => this.nextSong(true));
         // 音频加载完成：结束封面加载态
-        this.audio.addEventListener('loadeddata', () => this.cover.classList.remove('loading'));
+        this.audio.addEventListener('loadeddata', () => this.cover.classList.remove('buffering'));
         // 音频真正开始播放：同步 UI 状态（降级恢复播放后不再残留"播放失败"态）
         this.audio.addEventListener('playing', () => {
             this._degrading = false; // 音频真正开始播放：解除降级标记
@@ -120,15 +136,30 @@ class MusicPlayer {
             this.isPlaying = true;
             this.playBtn.innerHTML = '<i class="ri-pause-fill"></i>';
             this.failToken = null; // 播放已恢复，允许后续失败重新提示
+            clearTimeout(this._errorTimer); // 播放已恢复，作废之前的错误验证定时器
+            // 当前歌曲已稳定播放，此时再预加载下一首，避免与当前加载并发抢带宽
+            // 注意：prefetchNextSongBackup 内部会置位 _preloadDone，此处不得提前置位
+            this.prefetchNextSongBackup();
         });
         // 播放中出错（如网络中断）：延迟验证，仅在音频从未成功播放、不在降级流程、
         // 且无可用数据时才提示失败，避免降级缓冲期间误报
         this.audio.addEventListener('error', () => {
+            const errToken = this.sourceToken; // 快照当前歌曲令牌，回调时校验是否已切歌
             clearTimeout(this._errorTimer);
             this._errorTimer = setTimeout(() => {
-                if (this.isPlaying && this.audio.paused && !this._degrading &&
-                    !this._playStarted && this.audio.readyState === 0) {
+                // 已切歌则丢弃过期错误验证，防止新歌尚未开始播放时误报"播放失败"导致异常暂停
+                if (errToken !== this.sourceToken) return;
+                if (!this.isPlaying || this._degrading || !this.audio.paused) return;
+                if (!this._playStarted && this.audio.readyState === 0) {
+                    // 从未成功播放：确认为播放失败
                     this.showPlayFail();
+                } else if (this._backupFromCache) {
+                    // 曾正常播放但意外中断（如缓存的网易签名链接过期）：
+                    // 清除过期缓存并重新解析重试，而非误报"播放失败"
+                    this._backupFromCache = false;
+                    const song = this.songs[this.currentIndex];
+                    this.clearCachedBackupUrl(this.extractSongId(song));
+                    this.fallbackAndPlay(errToken);
                 }
             }, 800);
         });
@@ -161,17 +192,28 @@ class MusicPlayer {
         });
         // 点击页面其他区域关闭悬浮菜单
         document.addEventListener('click', () => this.closeModeMenu());
+
+        // 音乐平台切换：同步更新输入框占位提示（网易云 / QQ音乐）
+        const platformSelect = document.getElementById('platform-select');
+        if (platformSelect) {
+            platformSelect.addEventListener('change', () => {
+                this.playlistInput.placeholder = platformSelect.value === 'tencent'
+                    ? '输入QQ音乐歌单ID...'
+                    : '输入网易云歌单ID...';
+            });
+        }
     }
     
     /* ---------- 播放模式控制 ---------- */
     
     /**
      * 模式图标映射：按钮图标与当前激活模式保持一致
+     * sequential=顺序(列表循环) / shuffle=随机 / loop=单曲循环
      */
     MODE_ICONS = {
         sequential: 'ri-list-unordered',
         shuffle: 'ri-shuffle-line',
-        loop: 'ri-repeat-line'
+        loop: 'ri-repeat-one-line'
     };
     
     /**
@@ -221,9 +263,9 @@ class MusicPlayer {
     }
     
     /**
-     * 构建无重复随机播放序列（Fisher-Yates 洗牌）：
-     * 序列包含全列表索引，且首元素为当前正在播放的曲目，
-     * 保证整轮遍历中不重复、且切换后不会跳过当前曲目
+     * 构建无重复随机播放序列（Fisher-Yates 洗牌）
+     * @param {number} [startIndex=currentIndex] 序列首元素索引（当前曲目固定为首位，
+     *   保证整轮遍历不重复、且切歌后不会跳过当前曲目）
      */
     buildShuffleOrder(startIndex = this.currentIndex) {
         const len = this.songs.length;
@@ -246,8 +288,8 @@ class MusicPlayer {
     }
     
     /**
-     * 随机模式：取无重复序列中的下一首（游标前进，越界重新洗牌）
-     * 重新洗牌时避免首元素与上一轮结尾连续重复
+     * 随机模式：取无重复序列中的下一首索引（游标前进，越界后重新洗牌一次）
+     * @returns {number} 下一首歌曲索引
      */
     nextShuffleIndex() {
         if (!this.shuffleOrder.length) this.buildShuffleOrder();
@@ -266,26 +308,22 @@ class MusicPlayer {
     }
     
     /**
-     * 根据当前播放模式计算下一首索引；返回 -1 表示播放结束（顺序模式自动播完最后一首）
-     * fromAuto=true 表示由音频自然播放结束触发（区分手动切歌）
+     * 根据当前播放模式计算下一首索引（所有模式均保证有下一首）
+     * @returns {number} 下一首歌曲索引
      */
-    getNextIndex(fromAuto = false) {
-        if (this.playMode === 'sequential') {
-            // 手动点击下一首：最后一首后循环回第一首；自动播完：末尾停止
-            if (this.currentIndex >= this.songs.length - 1) {
-                return fromAuto ? -1 : 0;
-            }
-            return this.currentIndex + 1;
-        }
+    getNextIndex() {
         if (this.playMode === 'shuffle') {
+            // 随机模式：取无重复随机序列中的下一首
             return this.nextShuffleIndex();
         }
-        // loop：循环回到第一首
+        // 顺序 / 单曲循环：顺序推进，末尾循环回第一首
+        // （单曲循环模式下自动播完不走此分支，由 nextSong 特判重播当前曲目）
         return (this.currentIndex + 1) % this.songs.length;
     }
     
     /**
-     * 上面这些事件用到的关键方法：根据模式决定上一首（随机模式回退游标）
+     * 根据当前播放模式计算上一首索引（随机模式回退游标，其余模式循环取前一首）
+     * @returns {number} 上一首歌曲索引
      */
     getPrevIndex() {
         if (this.playMode === 'shuffle') {
@@ -345,15 +383,21 @@ class MusicPlayer {
         }, 3000);
     }
     
+    /** 页面加载时自动恢复上次解析成功的歌单（不自动播放，由用户点击开始） */
     loadLastPlaylist() {
         const lastPlaylistId = localStorage.getItem('lastPlaylistId');
         if (lastPlaylistId) {
             this.playlistInput.value = lastPlaylistId;
-            this.parsePlaylist();
+            this.parsePlaylist('restore');
         }
     }
     
-    async parsePlaylist() {
+    /**
+     * 解析歌单：从 meting-api 获取歌曲列表并载入播放器（不自动播放）
+     * @param {'manual'|'restore'} [source='manual'] 触发来源：
+     *   manual 为用户手动解析；restore 为页面加载自动恢复（失败时给出区分提示）
+     */
+    async parsePlaylist(source = 'manual') {
         const playlistId = this.playlistInput.value.trim();
         if (!playlistId) {
             this.showToast('请输入歌单ID', 'error');
@@ -364,26 +408,29 @@ class MusicPlayer {
             this.parseBtn.disabled = true;
             this.parseBtn.textContent = '解析中...';
             
-            const response = await fetch(`https://api.qijieya.cn/meting/?type=playlist&id=${playlistId}`);
-            if (!response.ok) throw { friendly: '网络异常，请稍后重试' };
-            const data = await response.json();
+            // 歌单解析接口（meting-api，域名由 config.js 的 apiBase 配置）
+            const songs = await this.fetchPlaylistSongs(playlistId);
             
-            if (!Array.isArray(data) || data.length === 0) {
+            if (!songs.length) {
                 throw { friendly: '无效的歌单ID或歌单为空' };
             }
             
-            this.songs = data;
+            this.songs = songs;
             this.currentIndex = 0;
             this.renderPlaylist();
             await this.loadSong();
             
             // 解析成功后再持久化，避免坏 ID 每次刷新都自动重试
             localStorage.setItem('lastPlaylistId', playlistId);
-            this.showToast(`成功加载 ${data.length} 首歌曲`);
-            this.songCount.textContent = `${data.length} 首歌曲`;
+            this.showToast(`成功加载 ${this.songs.length} 首歌曲`);
+            this.songCount.textContent = `${this.songs.length} 首歌曲`;
             
         } catch (error) {
-            this.showToast(error.friendly || '解析失败，请检查网络或歌单ID后重试', 'error');
+            // 自动恢复上次歌单失败时给出上下文提示，便于用户重新输入
+            const msg = source === 'restore'
+                ? '上次的歌单恢复失败，请重新输入歌单ID'
+                : (error.friendly || '解析失败，请检查网络或歌单ID后重试');
+            this.showToast(msg, 'error');
             console.error('Error parsing playlist:', error);
         } finally {
             this.parseBtn.disabled = false;
@@ -445,13 +492,27 @@ class MusicPlayer {
         }
     }
     
+    /**
+     * 加载 currentIndex 指向的歌曲（切歌核心流程）：
+     * 1. 递增切歌令牌 sourceToken，使旧的异步降级任务结果失效
+     * 2. 同步设置播放链接（song.url / 本地缓存），立即开始加载
+     * 3. 后台解析播放链接（runSourceFallback）、预取下一首、加载歌词
+     * 4. 若处于播放态则自动 play()，失败走降级重试
+     */
     async loadSong() {
         if (!this.songs.length) return;
         
         const song = this.songs[this.currentIndex];
         this.sourceToken++; // 递增切歌令牌，使旧降级任务的结果失效
         const token = this.sourceToken;
+        clearTimeout(this._errorTimer); // 清除上一首遗留的错误验证定时器，防止跨切歌误报暂停
+        this._degrading = false; // 新歌开始：清空降级标记（若后续进入降级流程会重新置位）
         this._playStarted = false; // 新歌尚未真正开始播放
+        this._preloadDone = false; // 新歌的下一首尚未预加载
+        this.currentLyric = null;
+        this.progressCurrent.style.width = '0%';
+        this.currentTime.textContent = '00:00';
+        this.duration.textContent = '00:00';
         
         this.songName.textContent = song.title || song.name;
         this.artistName.textContent = song.author || song.artist;
@@ -461,82 +522,51 @@ class MusicPlayer {
             this.cover.onerror = null;
             this.cover.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="%23eef1f8"/><text x="50%" y="50%" fill="%234f6ef7" font-size="72" text-anchor="middle" dominant-baseline="middle">♪</text></svg>';
         };
-        this.cover.classList.add('loading'); // 切歌加载反馈，音频加载完成或降级结束后移除
+this.cover.classList.add('buffering'); // 切歌加载反馈，音频加载完成或链接获取结束后移除
         
-        // 同步设置主接口播放链接，保证点击播放即时响应；
-        // 随后后台静默降级探测：主接口无效时自动切换备用接口，不阻塞用户操作
-        // （http 统一转 https，避免 https 页面混合内容被浏览器拦截）
-        this.audio.src = (song.url || '').replace(/^http:\/\//i, 'https://');
-        this.runSourceFallback(song, token);
-        // 并行预取备用链接：主 URL 播放失败时备用已就绪/在途，缩短降级等待时间
+        // 同步设置播放链接：优先本地缓存中解析出的真实音频地址（直接加载音乐 CDN，
+        // 不再请求 meting）；无缓存时留空，由 runSourceFallback 节流解析后填充，
+        // 避免每次切歌都加载 type=url 端点触发服务端限流(429)
         const songId = this.extractSongId(song);
+        const cachedUrl = songId ? this.getCachedBackupUrl(songId) : '';
+        this.audio.src = cachedUrl || '';
+        this.runSourceFallback(song, token);
+        // 并行预取当前歌曲的播放链接（写入缓存，供下次播放秒开）
         if (songId) {
-            this.getBackupPlayUrl(songId, song.url || '');
+            this.getPlayUrl(songId);
         }
+        // 注意：不在此处预加载下一首——避免与当前歌曲加载并发抢带宽导致卡顿；
+        // 改为当前歌曲稳定播放（playing 事件）或加载 3s 后（兜底）再预加载下一首
+        setTimeout(() => {
+            if (token === this.sourceToken && !this._preloadDone) {
+                this.prefetchNextSongBackup();
+            }
+        }, 3000);
         
         // 同步播放列表高亮并滚动定位到当前播放歌曲
         this.syncPlaylistActive();
         
-        // 加载歌词（8s 超时，接口挂起时不阻塞切歌）
-        const lrcController = new AbortController();
-        const lrcTimer = setTimeout(() => lrcController.abort(), 8000);
-        try {
-            const response = await fetch(song.lrc, { signal: lrcController.signal });
-            const lrcText = await response.text();
-            if (token === this.sourceToken) {
-                this.parseLyric(lrcText);
-            }
-        } catch (error) {
-            console.error('Error loading lyrics:', error);
-            if (token === this.sourceToken) {
-                this.lyricsContainer.innerHTML = '<p class="empty-lyrics">暂无歌词</p>';
-            }
-        } finally {
-            clearTimeout(lrcTimer);
-        }
-        
+        // 歌词在后台加载，不能阻塞切歌后的音频播放；meting-api /api?type=lrc 返回纯文本歌词
+        this.loadLyrics(song.lrc, token);
+
         if (this.isPlaying) {
-            // 主接口播放失败不立即提示：交由后台降级流程处理（有可用备用链接则静默续播，双失败才提示）
+            // 播放失败不立即提示：交由后台流程通过 meting-api 获取播放链接（成功则静默续播，失败才提示）
             this.audio.play().catch(() => this.fallbackAndPlay(token));
         }
     }
     
     /**
-     * 获取可播放的播放链接（主接口优先，失败则静默降级备用接口）：
-     * - 返回可用链接；主、备用接口均失败时返回空字符串
-     */
-    async ensurePlayUrl(song) {
-        // 1) 主播放接口（http 统一转 https，避免 https 页面混合内容被拦截）
-        const mainUrl = (song.url || '').replace(/^http:\/\//i, 'https://');
-        const songId = this.extractSongId(song);
-        
-        // 主接口探测 2s 内返回：快速判定主 URL 不可播，尽早进入降级
-        if (mainUrl && await this.probePlayable(mainUrl, 2000)) {
-            return mainUrl; // 主接口正常：仅调用主接口
-        }
-        
-        // 2) 备用播放接口：传入相同音乐 ID，接口切换过程静默、不提示用户
-        if (songId) {
-            const backupUrl = await this.getBackupPlayUrl(songId, mainUrl);
-            if (backupUrl && await this.probePlayable(backupUrl, 2000)) {
-                return backupUrl;
-            }
-        }
-        
-        // 3) 主、备用接口均失败
-        return '';
-    }
-    
-    /**
-     * 后台降级探测：主接口链接无效时，静默将 audio.src 替换为备用接口链接
-     * （双失败且正在播放时才提示，其余场景等待用户操作）
+     * 后台获取播放链接并通过降级流程恢复播放
+     * @param {object} song 当前歌曲对象
+     * @param {number} token 发起时的切歌令牌，用于丢弃切歌后的过期结果
      */
     async runSourceFallback(song, token) {
-        const playUrl = await this.ensurePlayUrl(song);
+        const songId = this.extractSongId(song);
+        const playUrl = songId ? await this.getPlayUrl(songId) : '';
         if (token !== this.sourceToken) return; // 已切歌，丢弃过期结果
-        this.cover.classList.remove('loading'); // 降级探测结束，结束封面加载态
+        this.cover.classList.remove('buffering'); // 链接获取结束，结束封面加载态
         if (!playUrl) {
-            // 主、备用接口均探测失败：若音频实际已在播放（探测误判），静默保留当前播放
+            // 获取失败：若音频实际已在播放，静默保留
             if (this.isPlaying && !this.audio.paused && this.audio.readyState >= 2) {
                 return;
             }
@@ -546,9 +576,10 @@ class MusicPlayer {
         }
         if (playUrl !== this.audio.getAttribute('src')) {
             this.audio.src = playUrl;
-            // 替换 src 会中断当前播放，若处于播放态则恢复播放
+            // 替换 src 会中断当前播放，若处于播放态则恢复播放；
+            // 恢复失败走降级流程（而非静默吞错），避免 isPlaying=true 但音频实际暂停的假播放态
             if (this.isPlaying) {
-                this.audio.play().catch(() => {});
+                this.audio.play().catch(() => this.fallbackAndPlay(token));
             }
         }
     }
@@ -556,75 +587,25 @@ class MusicPlayer {
     /**
      * 从歌曲对象中提取音乐 ID：
      * 依次从 url / lrc / pic 链接的 id 参数中提取，任一含 id 即返回
+     * （网易云 ID 为纯数字，QQ 音乐 ID 可含字母，故按非空参数匹配）
      */
     extractSongId(song) {
         if (!song) return '';
         const pick = (u) => {
-            const m = String(u || '').match(/[?&]id=(\d+)/);
+            const m = String(u || '').match(/[?&]id=([^&]+)/);
             return m ? m[1] : '';
         };
         return pick(song.url) || pick(song.lrc) || pick(song.pic);
     }
     
     /**
-     * 探测链接是否为可播放的有效音频（通过 audio 元素加载，不受 CORS 限制）
-     */
-    probePlayable(url, timeout = 8000) {
-        return new Promise((resolve) => {
-            if (!url) {
-                resolve(false);
-                return;
-            }
-            const probe = new Audio();
-            let done = false;
-            const finish = (ok) => {
-                if (done) return;
-                done = true;
-                clearTimeout(timer);
-                probe.removeEventListener('loadedmetadata', onOk);
-                probe.removeEventListener('error', onErr);
-                probe.removeAttribute('src');
-                probe.load();
-                resolve(ok);
-            };
-            const onOk = () => finish(true);
-            const onErr = () => finish(false);
-            const timer = setTimeout(() => finish(false), timeout);
-            probe.addEventListener('loadedmetadata', onOk);
-            probe.addEventListener('error', onErr);
-            probe.preload = 'metadata';
-            probe.src = url;
-        });
-    }
-    
-    /**
-     * 备用播放接口（多源并行，谁先返回有效用谁）：
-     * 1) ncm-api 播放链接接口（unblock=true，无需 Cookie）
-     * 2) meting type=song 接口（与示例网页接口规范一致）
-     * 排除无效链接：与主 URL 相同、或同为 qijieya 的 url 接口（返回 text/html 不可播）
-     */
-    async fetchBackupPlayUrl(songId, mainUrl = '') {
-        if (!songId) return '';
-        const results = await Promise.allSettled([
-            this.fetchNcmApiPlayUrl(songId),
-            this.fetchMetingPlayUrl(songId)
-        ]);
-        for (const r of results) {
-            if (r.status !== 'fulfilled' || !r.value) continue;
-            const u = r.value;
-            if (u === mainUrl) continue; // 与主 URL 相同，必然不可播
-            if (/meting\/\?server=netease&type=url/.test(u)) continue; // qijieya url 接口不可播
-            return u;
-        }
-        return '';
-    }
-
-    /**
-     * 获取备用播放链接（Promise 缓存 + localStorage 24h 缓存）：
+     * 获取播放链接（并发去重 + localStorage 24h 缓存）：
      * - 并发去重：runSourceFallback 与 fallbackAndPlay 共享同一请求
      * - 本地缓存：同一首歌重复播放直接复用，避免重复等待慢接口
+     * @param {string} songId 音乐 ID
+     * @returns {Promise<string>} 播放链接（meting-api url 端点），失败返回空串
      */
-    getBackupPlayUrl(songId, mainUrl = '') {
+    getPlayUrl(songId) {
         if (!songId) return Promise.resolve('');
         if (this._backupSongId === songId && this._backupPromise) {
             return this._backupPromise;
@@ -636,7 +617,7 @@ class MusicPlayer {
         }
         this._backupFromCache = false;
         this._backupSongId = songId;
-        this._backupPromise = this.fetchBackupPlayUrl(songId, mainUrl)
+        this._backupPromise = this.fetchPlayUrl(songId)
             .then((url) => {
                 if (url) this.setCachedBackupUrl(songId, url);
                 return url;
@@ -648,7 +629,7 @@ class MusicPlayer {
         return this._backupPromise;
     }
 
-    /** 读取备用链接本地缓存（24h 内有效） */
+    /** 读取播放链接本地缓存（2h 内有效；旧版缓存的 meting 端点视为无效，需重新解析） */
     getCachedBackupUrl(songId) {
         try {
             const raw = localStorage.getItem('backupUrlCache');
@@ -656,14 +637,19 @@ class MusicPlayer {
             const cache = JSON.parse(raw);
             const entry = cache[songId];
             if (!entry || !entry.t || !entry.url) return '';
-            if (Date.now() - entry.t > 86400000) return '';
+            // 网易 CDN 音频地址带签名，有效期仅数小时：缓存采用 2 小时，
+            // 超过即视为过期重新解析，避免播放到过期链接导致中断
+            if (Date.now() - entry.t > 7200000) return '';
+            // 旧版本缓存的是 meting type=url 端点（播放时仍会请求 meting），
+            // 需重新解析为真实音频地址后缓存
+            if (entry.url.includes('/api?server=')) return '';
             return entry.url;
         } catch (error) {
             return '';
         }
     }
 
-    /** 写入备用链接本地缓存（限制条数，避免无限增长） */
+    /** 写入播放链接本地缓存（限制条数，避免无限增长） */
     setCachedBackupUrl(songId, url) {
         try {
             const raw = localStorage.getItem('backupUrlCache');
@@ -679,7 +665,7 @@ class MusicPlayer {
         }
     }
 
-    /** 清除某首歌的备用链接缓存（缓存链接失效时调用） */
+    /** 清除某首歌的播放链接缓存（缓存链接失效时调用） */
     clearCachedBackupUrl(songId) {
         try {
             const raw = localStorage.getItem('backupUrlCache');
@@ -693,72 +679,240 @@ class MusicPlayer {
             // 忽略
         }
     }
-
-    /** meting type=song 备用接口（6s 超时） */
-    async fetchMetingPlayUrl(songId) {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 6000);
-        try {
-            const response = await fetch(
-                `https://api.qijieya.cn/meting/?server=netease&type=song&id=${songId}`,
-                { signal: controller.signal }
-            );
-            const data = await response.json();
-            if (!Array.isArray(data) || !data.length) return '';
-            return String(data[0].url || '').replace(/^http:\/\//i, 'https://');
-        } catch (error) {
-            console.error('meting 备用播放接口请求失败:', error.message);
-            return '';
-        } finally {
-            clearTimeout(timer);
-        }
-    }
     
     /**
-     * 读取当前播放配置（音质等级）：
-     * - 优先取 config.js 中的 window.NCM_CONFIG
-     * - level 非法时回退默认值，config.js 缺失也能正常运行
+     * 读取当前歌曲列表的音乐平台（currentPlatform，解析歌单时记录）：
+     * 播放链接 / 歌词 / 封面解析据此请求对应平台的接口
+     * @returns {'netease'|'tencent'} 平台标识
      */
-    getPlayConfig() {
+    getPlatform() {
+        return this.currentPlatform === 'tencent' ? 'tencent' : 'netease';
+    }
+
+    /**
+     * 读取解析栏下拉框选中的音乐平台（下次解析歌单使用，默认网易云）
+     * @returns {'netease'|'tencent'} 平台标识
+     */
+    getSelectPlatform() {
+        const el = document.getElementById('platform-select');
+        return el && el.value === 'tencent' ? 'tencent' : 'netease';
+    }
+
+    /**
+     * 读取当前生效的歌曲接口地址（meting-api 主备之一，config.js 配置）：
+     * 歌单解析 / 播放链接 / 歌词 / 封面均走此接口；主接口 429 限流时
+     * 由 switchApiBase 轮换到备用接口，后续请求自动使用新地址
+     */
+    getApiBase() {
         const cfg = (typeof window !== 'undefined' && window.NCM_CONFIG) || {};
+        const primary = cfg.apiBase || 'https://meting.xyf111.top';
+        const backup = cfg.apiBaseBackup || 'http://8.130.9.143:3000';
+        // 首次调用时载入主备地址表（保持幂等，避免重复初始化）
+        if (!this._apiBases.length) {
+            this._apiBases = [primary, backup];
+        }
+        return this._apiBases[this._activeApiIdx] || primary;
+    }
+
+    /**
+     * 轮换到下一个 meting 接口（主接口 429 限流时切换备用接口）
+     * @returns {string} 切换后生效的接口地址
+     */
+    switchApiBase() {
+        this.getApiBase(); // 确保地址表已初始化
+        if (this._apiBases.length < 2) return this._apiBases[0];
+        this._activeApiIdx = (this._activeApiIdx + 1) % this._apiBases.length;
+        return this._apiBases[this._activeApiIdx];
+    }
+
+    /**
+     * 读取歌单浏览弹窗 API 服务地址（config.js 中 playlistApiBase 配置，ncm-api）：
+     * 弹窗的分类与歌单列表接口保持不变，仅此一处使用
+     */
+    getPlaylistApiBase() {
+        const cfg = (typeof window !== 'undefined' && window.NCM_CONFIG) || {};
+        return cfg.playlistApiBase || 'https://ncm-api.prod.gbclstudio.cn';
+    }
+
+    /**
+     * 统一 http → https，避免混合内容被浏览器拦截
+     */
+    toHttps(url) {
+        return String(url || '').replace(/^http:\/\//i, 'https://');
+    }
+
+    /**
+     * 获取歌单歌曲列表（meting-api /api?type=playlist）并记录为当前列表平台
+     * @param {string} playlistId 歌单 ID
+     * @param {'netease'|'tencent'} [server] 音乐平台，默认取解析栏当前选择
+     * @returns {Promise<Array>} 已转换为播放器统一格式的歌曲数组
+     */
+    async fetchPlaylistSongs(playlistId, server = this.getSelectPlatform()) {
+        // 记录当前列表平台：播放/歌词/封面解析统一按该平台请求
+        this.currentPlatform = server === 'tencent' ? 'tencent' : 'netease';
+        // 走节流队列：主接口 429 时自动切换备用接口重试
+        const response = await this._throttledFetch(
+            `${this.getApiBase()}/api?server=${server}&type=playlist&id=${encodeURIComponent(playlistId)}`
+        );
+        if (!response.ok) throw { friendly: '网络异常，请稍后重试' };
+        const data = await response.json();
+        // meting-api 返回歌曲数组；兼容旧 ncm-api 的 { songs: [...] } 结构
+        const songs = Array.isArray(data) ? data : (data && data.songs) || [];
+        return songs.map((s) => this.mapSong(s));
+    }
+
+    /**
+     * 将接口歌曲字段转换为播放器统一的歌曲格式
+     * （meting-api：title/author/pic/url/lrc；兼容 ncm-api：name/ar/al）
+     */
+    mapSong(s) {
+        const pic = this.coverUrl(s.pic || (s.al && s.al.picUrl), 300);
         return {
-            level: PLAY_LEVELS.includes(cfg.level) ? cfg.level : DEFAULT_PLAY_CONFIG.level
+            title: s.title || s.name || '',
+            author: s.author || (s.ar || []).map((a) => a.name).filter(Boolean).join(' / '),
+            pic,
+            // 播放链接：meting-api 返回的 url 端点，浏览器自动跟随 302 重定向到音频地址
+            url: this.toHttps(s.url || ''),
+            lrc: this.toHttps(s.lrc || (s.id
+                ? `${this.getApiBase()}/api?server=${this.getPlatform()}&type=lrc&id=${s.id}` : ''))
         };
     }
 
+    /** 压缩封面图片（网易云 CDN 支持 ?param= 参数），加快加载速度 */
+    coverUrl(url, size = 300) {
+        const src = this.toHttps(url);
+        if (!src) return '';
+        return `${src.split('?')[0]}?param=${size}y${size}`;
+    }
+
     /**
-     * ncm-api 播放链接接口：
-     * - 携带音质等级与 unblock=true 即可返回播放链接，无需 Cookie
-     *   （格式：/song/url/v1?id=xxx&level=xxx&unblock=true）
-     * - 等级在 config.js 中配置，修改后刷新页面即生效
-     * - 返回的链接可能为 http，统一转为 https 以保证浏览器可播
+     * 预取"下一首"的播放链接：提前发起请求并写入本地缓存，
+     * 点击下一首时大概率已就绪（缓存命中），大幅缩短切歌等待时间
      */
-    async fetchNcmApiPlayUrl(songId) {
-        if (!songId) return '';
-        const { level } = this.getPlayConfig();
-        const params = new URLSearchParams({ id: songId, level, unblock: 'true' });
-        // 6s 超时：备用接口最多等待 6s，超时视为该源不可用
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 6000);
-        try {
-            const response = await fetch(
-                `https://ncm-api.prod.gbclstudio.cn/song/url/v1?${params.toString()}`,
-                { signal: controller.signal }
-            );
-            if (!response.ok) return '';
-            const data = await response.json();
-            const url = data && data.data && data.data[0] ? data.data[0].url : '';
-            if (!url) return '';
-            // http → https
-            return url.replace(/^http:\/\//i, 'https://');
-        } catch (error) {
-            console.error('ncm-api 播放链接请求失败:', error.message);
-            return '';
-        } finally {
-            clearTimeout(timer);
+    prefetchNextSongBackup() {
+        if (this._preloadDone) return; // 幂等：每首歌只预加载一次
+        this._preloadDone = true;
+        if (!this.songs || this.songs.length < 2) return;
+        let nextIndex;
+        if (this.playMode === 'shuffle') {
+            // 随机模式：预取随机序列中的下一首（不推进游标）
+            if (!this.shuffleOrder.length) this.buildShuffleOrder();
+            const n = this.shuffleOrder[this.shuffleCursor + 1];
+            nextIndex = n !== undefined ? n : this.shuffleOrder[0];
+        } else {
+            // 顺序/单曲循环模式：手动切歌均顺序推进并循环，预取下一首即可
+            nextIndex = (this.currentIndex + 1) % this.songs.length;
+        }
+        if (nextIndex === this.currentIndex) return;
+        const nextItem = this.songs[nextIndex];
+        if (!nextItem) return;
+        const nextId = this.extractSongId(nextItem);
+        if (nextId) {
+            // 预取下一首的播放链接（节流解析真实音频地址并写入缓存）；
+            // 仅当解析出真实音频地址（非 meting 端点）时才用隐藏 Audio 预热 CDN，
+            // 避免预取加载端点额外占用 meting 请求配额
+            this.getPlayUrl(nextId).then((url) => {
+                if (url && !url.includes('/api?server=') && this._preloadAudio) {
+                    this._preloadAudio.src = url;
+                }
+            });
         }
     }
     
+    /**
+     * 节流请求：所有 meting 解析请求（播放链接/歌词/歌单）串行执行，
+     * 且与上一次请求间隔 ≥ _metingMinGap，防止快速切歌时突发请求触发限流(429)；
+     * 请求返回 429 时自动轮换到备用接口并立即重试当前请求
+     * @param {string} url 请求地址
+     * @param {object} [options] fetch 选项
+     * @returns {Promise<Response>}
+     */
+    _throttledFetch(url, options = {}) {
+        const run = async () => {
+            const elapsed = Date.now() - this._metingLastTs;
+            if (elapsed < this._metingMinGap) {
+                await new Promise((r) => setTimeout(r, this._metingMinGap - elapsed));
+            }
+            this._metingLastTs = Date.now();
+            const activeBase = this.getApiBase();
+            let response = await fetch(url, options);
+            // 主接口限流(429)：切换到备用接口并重试当前请求（备用也 429 时轮换回主）
+            if (response.status === 429) {
+                const nextBase = this.switchApiBase();
+                if (nextBase && nextBase !== activeBase) {
+                    const retryUrl = url.replace(activeBase, nextBase);
+                    response = await fetch(retryUrl, options);
+                }
+            }
+            return response;
+        };
+        const task = this._metingQueue.then(run, run);
+        this._metingQueue = task.catch(() => {}); // 队列不因单个请求失败而中断
+        return task;
+    }
+
+    /**
+     * 解析歌曲播放链接（meting-api /api?server=当前平台&type=url）：
+     * 端点返回 302 重定向到真实音频地址，此处用 HEAD + 跟随重定向解析出
+     * 真实 mp3 地址并缓存，之后播放/预取直接加载音乐 CDN，不再请求 meting，
+     * 避免频繁切歌触发服务端限流(429)
+     * @param {string} songId 音乐 ID
+     * @returns {Promise<string>} 真实音频地址；解析失败返回空串
+     */
+    async fetchPlayUrl(songId) {
+        if (!songId) return '';
+        const url = `${this.getApiBase()}/api?server=${this.getPlatform()}&type=url&id=${encodeURIComponent(songId)}`;
+        try {
+            // HEAD + 跟随重定向：拿到最终音频地址，不下载音频内容
+            let response = await this._throttledFetch(url, { method: 'HEAD', redirect: 'follow' });
+            if (response.ok && response.url && !response.url.includes('/api?server=')) {
+                return response.url;
+            }
+            // HEAD 不被支持（如 405）时回退 GET：获取地址后立即取消 body 下载
+            response = await this._throttledFetch(url, { redirect: 'follow' });
+            if (!response.ok || !response.url || response.url.includes('/api?server=')) return '';
+            if (response.body && typeof response.body.cancel === 'function') {
+                response.body.cancel();
+            }
+            return response.url;
+        } catch (error) {
+            console.error('播放链接解析失败:', error.message);
+            return '';
+        }
+    }
+    
+    /**
+     * 后台加载歌词并解析（异步，不阻塞切歌后的音频播放）
+     * @param {string} url 歌词接口地址（meting-api /api?type=lrc，返回纯文本）
+     * @param {number} token 切歌令牌，切歌后丢弃过期歌词结果
+     */
+    async loadLyrics(url, token) {
+        const lrcController = new AbortController();
+        const lrcTimer = setTimeout(() => lrcController.abort(), 8000);
+        try {
+            // 歌词请求同样走节流队列，避免与播放链接解析叠加触发限流(429)
+            const response = await this._throttledFetch(url, { signal: lrcController.signal });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            // meting-api /api?type=lrc 返回纯文本歌词（含翻译合并），直接按行解析
+            const lrcText = await response.text();
+            if (token === this.sourceToken) {
+                this.parseLyric(lrcText);
+            }
+        } catch (error) {
+            console.error('Error loading lyrics:', error);
+            if (token === this.sourceToken) {
+                // 区分"无歌词"与"加载失败"，便于用户感知并重试
+                this.lyricsContainer.innerHTML = '<p class="empty-lyrics">歌词加载失败</p>';
+            }
+        } finally {
+            clearTimeout(lrcTimer);
+        }
+    }
+
+    /**
+     * 将 LRC 纯文本解析为 {time, text} 数组并渲染
+     * @param {string} lrcText LRC 歌词文本（每行 [mm:ss.xx] 时间戳 + 内容）
+     */
     parseLyric(lrcText) {
         const lines = lrcText.split('\n');
         const lyrics = [];
@@ -781,6 +935,7 @@ class MusicPlayer {
         this.renderLyrics();
     }
     
+    /** 渲染歌词列表到容器（无歌词时显示占位文案） */
     renderLyrics() {
         if (!this.lyrics.length) {
             this.lyricsContainer.innerHTML = '<p class="empty-lyrics">暂无歌词</p>';
@@ -792,6 +947,10 @@ class MusicPlayer {
             .join('');
     }
     
+    /**
+     * 根据当前播放进度高亮对应歌词行（仅在新歌词行变化时更新，避免重复滚动）
+     * @param {number} currentTime 当前播放时间（秒）
+     */
     updateLyrics(currentTime) {
         if (!this.lyrics.length) return;
         
@@ -800,19 +959,27 @@ class MusicPlayer {
             return currentTime >= lyric.time && (!nextLyric || currentTime < nextLyric.time);
         });
         
-        if (currentLyric && this.currentLyric !== currentLyric) {
-            this.currentLyric = currentLyric;
+        // 高亮变化时更新：currentLyric 为 undefined（当前时间早于首行时间戳，
+        // 如单曲循环重播开头）时清空所有高亮，避免停留在上一遍的结尾行
+        if (currentLyric !== this.currentLyric) {
+            this.currentLyric = currentLyric || null;
             const allLines = this.lyricsContainer.querySelectorAll('.lyrics-line');
             allLines.forEach(line => line.classList.remove('active'));
-            
-            const activeLine = this.lyricsContainer.querySelector(`[data-time="${currentLyric.time}"]`);
-            if (activeLine) {
-                activeLine.classList.add('active');
-                activeLine.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            if (currentLyric) {
+                const activeLine = this.lyricsContainer.querySelector(`[data-time="${currentLyric.time}"]`);
+                if (activeLine) {
+                    activeLine.classList.add('active');
+                    activeLine.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
             }
         }
     }
     
+    /**
+     * 播放/暂停切换（用户点击播放按钮触发）：
+     * - 暂停：直接 pause 并同步 UI
+     * - 播放：设置 UI 后 play()，失败则走降级流程获取链接重试
+     */
     togglePlay() {
         if (this.isPlaying) {
             this.audio.pause();
@@ -821,7 +988,7 @@ class MusicPlayer {
         } else {
             this.playBtn.innerHTML = '<i class="ri-pause-fill"></i>';
             this.isPlaying = true;
-            // 若主接口链接无效，play() 会失败，此时静默降级备用接口再试
+            // 若当前链接无效，play() 会失败，此时通过 meting-api 获取播放链接再试
             this.audio.play().catch(() => this.fallbackAndPlay(this.sourceToken));
         }
     }
@@ -839,8 +1006,8 @@ class MusicPlayer {
     }
     
     /**
-     * 主接口播放失败时的静默降级：尝试用备用接口链接重新播放；
-     * token 校验防止切歌后旧降级结果覆盖新歌
+     * 播放失败时的重试：通过 meting-api 获取播放链接重新播放；
+     * token 校验防止切歌后旧任务结果覆盖新歌
      */
     async fallbackAndPlay(token) {
         const song = this.songs[this.currentIndex];
@@ -850,25 +1017,25 @@ class MusicPlayer {
         }
         this._degrading = true; // 降级期间屏蔽 error 误报；由 playing 事件或失败路径解除
         try {
-            // play() 已失败说明主 URL 不可播，跳过主 URL 探测，
-            // 直接获取备用链接并播放，大幅缩短降级等待时间
             const songId = this.extractSongId(song);
-            const mainUrl = (song.url || '').replace(/^http:\/\//i, 'https://');
-            const playUrl = songId ? await this.getBackupPlayUrl(songId, mainUrl) : '';
+            const playUrl = songId ? await this.getPlayUrl(songId) : '';
             if (token !== this.sourceToken) {
-                this._degrading = false; // 已切歌，丢弃过期结果并解除降级标记
+                // 已切歌，丢弃过期结果。
+                // 注意：不重置 _degrading——新歌的降级任务可能仍在进行，
+                // 旧任务重置会导致 error 定时器误报"播放失败"
                 return;
             }
-            this.cover.classList.remove('loading');
+            this.cover.classList.remove('buffering');
             if (!playUrl) {
-                // 主、备用接口均失败：统一提示（按歌去重）
+                // meting-api 获取失败：统一提示（按歌去重）
                 this._degrading = false;
                 this.showPlayFail();
                 return;
             }
             this.audio.src = playUrl;
             this.audio.play().catch(() => {
-                // 备用链接播放失败：若来自本地缓存，可能是链接已过期，清除缓存后重试一次
+                if (token !== this.sourceToken) return; // 切歌后旧任务失败不再提示
+                // 播放链接失败：若来自本地缓存，可能是链接已过期，清除缓存后重试一次
                 if (this._backupFromCache) {
                     this._backupFromCache = false;
                     this.clearCachedBackupUrl(songId);
@@ -878,12 +1045,16 @@ class MusicPlayer {
                 this.showPlayFail();
             });
             // 注意：play() 成功后不立即解除 _degrading，等 playing 事件（音频真正开始播放）
-            // 再解除，避免备用 URL 缓冲期间 error 定时器误报"播放失败"
+            // 再解除，避免链接缓冲期间 error 定时器误报"播放失败"
         } catch (error) {
-            this._degrading = false;
+            if (token === this.sourceToken) this._degrading = false;
         }
     }
     
+    /**
+     * 播放入口：切换当前索引并加载播放（暂停状态下也自动开始播放）
+     * @param {number} index 目标歌曲在列表中的索引
+     */
     async playSong(index) {
         this.currentIndex = index;
         // 手动选歌：随机模式下游标定位到所选曲目，保持"无重复"逻辑连续
@@ -896,6 +1067,7 @@ class MusicPlayer {
         }
     }
     
+    /** 手动切到上一首（暂停状态下也自动开始播放） */
     async prevSong() {
         if (!this.songs.length) return;
         this.currentIndex = this.getPrevIndex();
@@ -904,23 +1076,30 @@ class MusicPlayer {
         if (!this.isPlaying) this.togglePlay();
     }
     
+    /**
+     * 切到下一首；单曲循环模式下自动播完重播当前歌曲
+     * @param {boolean} [fromAuto=false] 是否由 ended 事件触发
+     */
     async nextSong(fromAuto = false) {
         if (!this.songs.length) return;
-        const nextIndex = this.getNextIndex(fromAuto);
-        if (nextIndex === -1) {
-            // 顺序模式自动播放到最后一首：停止播放
-            this.audio.pause();
+        // 单曲循环：自动播完重复当前歌曲（不切歌、不重新加载，直接从头重播）
+        if (this.playMode === 'loop' && fromAuto) {
+            // 重置歌词高亮并回到顶部，避免重播开头仍停留在上一遍的结尾行
+            this.currentLyric = null;
+            this.lyricsContainer.querySelectorAll('.lyrics-line').forEach((line) => line.classList.remove('active'));
+            const wrapper = this.lyricsContainer.closest('.lyrics-wrapper');
+            if (wrapper) wrapper.scrollTop = 0;
             this.audio.currentTime = 0;
-            this.playBtn.innerHTML = '<i class="ri-play-fill"></i>';
-            this.isPlaying = false;
+            this.audio.play().catch(() => {});
             return;
         }
-        this.currentIndex = nextIndex;
+        this.currentIndex = this.getNextIndex();
         await this.loadSong();
         // 手动切歌：暂停状态下也自动开始播放
         if (!this.isPlaying) this.togglePlay();
     }
     
+    /** 音频 timeupdate 事件：刷新进度条、时间显示与歌词高亮 */
     updateProgress() {
         const { currentTime, duration } = this.audio;
         // 时长无效（未加载/降级切换中）时跳过进度更新，避免 NaN 渲染
@@ -937,6 +1116,7 @@ class MusicPlayer {
         this.updateLyrics(currentTime);
     }
     
+    /** 点击进度条跳转播放位置（按点击横坐标比例计算目标时间） */
     setProgress(e) {
         const width = this.progress.clientWidth;
         const duration = this.audio.duration;
@@ -946,6 +1126,7 @@ class MusicPlayer {
         this.audio.currentTime = ratio * duration;
     }
     
+    /** 秒数格式化为 mm:ss（时长无效时由调用方兜底为 00:00） */
     formatTime(seconds) {
         const mins = Math.floor(seconds / 60);
         const secs = Math.floor(seconds % 60);
@@ -954,12 +1135,21 @@ class MusicPlayer {
 }
 
 /* ============================================================
-   歌单浏览弹窗（ncm-api 接口）
+   歌单浏览弹窗 PlaylistBrowser
+   - 分类与歌单列表接口保持 ncm-api 不变（config.js 的 playlistApiBase）
+   - 选中歌单后的歌曲解析走 meting-api（与输入框解析一致）
+   - 支持普通/精品两种板块，各自独立缓存分类、分页与列表数据
    ============================================================ */
+
+/**
+ * 歌单浏览弹窗：分类筛选、歌单列表浏览（含分页预取与缓存）、
+ * 点击歌单后交由 MusicPlayer 解析并播放
+ */
 class PlaylistBrowser {
     constructor(player) {
         this.player = player;
-        this.API_BASE = 'https://ncm-api.prod.gbclstudio.cn';
+        // 弹窗接口（分类/歌单列表）保持 ncm-api 不变（config.js 的 playlistApiBase）
+        this.API_BASE = this.player.getPlaylistApiBase();
         this.PAGE_SIZE = 50;
         this.CACHE_KEY = 'playlistCategoriesCache'; // 分类本地缓存（1 天有效）
         this.LIST_CACHE_KEY = 'playlistListCache'; // 歌单列表本地缓存（5 分钟有效）
@@ -1060,7 +1250,7 @@ class PlaylistBrowser {
     }
 
     /**
-     * 请求 ncm-api 并解析 JSON（自动重试 + 超时 + 响应校验）：
+     * 请求弹窗接口（ncm-api）并解析 JSON（自动重试 + 超时 + 响应校验）：
      * - 接口偶发"HTTP 200 但内容为错误页"、连接失败或超时，自动重试若干次降低失败概率
      * - 业务错误码（code 非 200）为明确响应，不重试
      */
@@ -1340,6 +1530,7 @@ class PlaylistBrowser {
         }
     }
 
+    /** 渲染当前模式的分类标签栏（含当前选中态高亮） */
     renderCats() {
         const ms = this.getModeState();
         this.elements.cats.innerHTML = ms.cats.map((cat) => `
@@ -1348,6 +1539,7 @@ class PlaylistBrowser {
         `).join('');
     }
 
+    /** 切换分类：重置分页状态并重新加载该分类下的歌单列表 */
     async selectCat(cat) {
         const ms = this.getModeState();
         if (cat === ms.currentCat) return;
@@ -1396,7 +1588,9 @@ class PlaylistBrowser {
             this.applyPageData(data);
         } catch (error) {
             console.error('加载歌单失败:', error.message);
-            this.player.showToast('歌单加载失败，请重试', 'error');
+            // 错误详情透出（截断过长），便于用户定位是网络/接口/歌单问题
+            const detail = error && error.message ? `：${String(error.message).slice(0, 40)}` : '';
+            this.player.showToast(`歌单加载失败${detail}，请重试`, 'error');
             // 恢复加载更多按钮，避免卡在"加载中..."，可直接重试
             this.elements.loadMoreBtn.textContent = ms.hasMore ? '加载更多' : '没有更多了';
             this.elements.loadMoreBtn.disabled = !ms.hasMore;
@@ -1516,6 +1710,7 @@ class PlaylistBrowser {
             });
     }
 
+    /** 渲染一页歌单卡片（追加到列表；首页时清空；空列表显示占位文案） */
     renderPlaylists(playlists, isFirstPage) {
         const ms = this.getModeState();
         if (!playlists.length) {
@@ -1548,6 +1743,7 @@ class PlaylistBrowser {
         ms.gridHTML = this.elements.playlists.innerHTML;
     }
 
+    /** 加载更多：优先使用滚动预取数据（立即渲染），否则发起新请求 */
     loadMore() {
         const ms = this.getModeState();
         if (ms.loading || !ms.hasMore) return;
@@ -1588,7 +1784,7 @@ class PlaylistBrowser {
         this.player.showToast(`歌单ID ${text} 已复制`, 'success');
     }
 
-    /** 点击歌单卡片：立即关闭弹窗并后台解析（/playlist/track/all） */
+    /** 点击歌单卡片：立即关闭弹窗并后台解析（歌单解析走 meting-api，与输入框解析一致） */
     async selectPlaylist(id) {
         // 点击反馈：卡片显示加载态，短暂延迟后关闭弹窗，解析在后台进行
         const card = this.elements.playlists.querySelector(`.pl-card[data-id="${id}"]`);
@@ -1597,38 +1793,31 @@ class PlaylistBrowser {
         setTimeout(() => this.close(), 200);
 
         try {
-            const data = await this.fetchJson(`${this.API_BASE}/playlist/track/all?id=${id}`);
-            const songs = (data && data.songs) || [];
+            // 弹窗列表均为网易云歌单：解析固定使用 netease，不受解析栏平台选择影响
+            const songs = await this.player.fetchPlaylistSongs(id, 'netease');
             if (!songs.length) {
                 this.player.showToast('该歌单暂无歌曲', 'error');
                 return;
             }
-            const mapped = songs.map((s) => this.mapSong(s));
             // 预取第一首歌的播放链接，加快首次播放
             try {
-                const first = mapped[0];
-                const url = await this.player.fetchNcmApiPlayUrl(this.player.extractSongId(first));
+                const first = songs[0];
+                const url = await this.player.getPlayUrl(this.player.extractSongId(first));
                 if (url) first.url = url;
             } catch (error) {
                 console.error('预取播放链接失败:', error.message);
             }
-            await this.player.loadPlaylist(mapped, String(id));
+            await this.player.loadPlaylist(songs, String(id));
         } catch (error) {
             console.error('加载歌单歌曲失败:', error.message);
-            this.player.showToast('歌单加载失败，请重试', 'error');
+            const detail = error && error.message ? `：${String(error.message).slice(0, 40)}` : '';
+            this.player.showToast(`歌单加载失败${detail}，请重试`, 'error');
         }
     }
 
-    /** 将 ncm-api 歌曲字段转换为播放器统一的歌曲格式 */
+    /** 将接口歌曲字段转换为播放器统一的歌曲格式（复用 MusicPlayer.mapSong） */
     mapSong(s) {
-        const pic = this.coverUrl(s.al && s.al.picUrl, 300);
-        return {
-            title: s.name || '',
-            author: (s.ar || []).map((a) => a.name).filter(Boolean).join(' / '),
-            pic,
-            url: '', // 播放链接由播放器后台降级接口自动获取
-            lrc: `https://api.qijieya.cn/meting/?server=netease&type=lrc&id=${s.id}`
-        };
+        return this.player.mapSong(s);
     }
 
     /** HTML 转义，防止接口返回内容破坏页面结构 */

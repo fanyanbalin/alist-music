@@ -3,15 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>阿铭原创音乐播放器</title>
-    <link rel="stylesheet" href="style.css">
-    <link href="https://cdn.jsdelivr.net/npm/remixicon@2.5.0/fonts/remixicon.css" rel="stylesheet">
+    <title>音乐播放器</title>
+    <!-- 网站图标（音乐.ico，UTF-8 URL 编码形式，兼容各类静态服务器） -->
+    <link rel="icon" href="music.ico" type="image/x-icon">
+    <link rel="stylesheet" href="style.css?v=20260810b">
+    <link href="vendor/remixicon/remixicon.css" rel="stylesheet">
 </head>
 <body>
+    <!-- 悬浮提示容器（成功/失败/信息提示） -->
     <div class="toast-container"></div>
     
     <div class="container">
-        <!-- 添加顶部提示区域 -->
+        <!-- 顶部欢迎提示（可关闭） -->
         <div class="welcome-tip">
             <div class="tip-content">
                 <i class="ri-music-2-line"></i>
@@ -26,7 +29,10 @@
                 <!-- 搜索区域 -->
                 <div class="search-section">
                     <div class="search-box">
-                        <i class="ri-search-line"></i>
+                        <select id="platform-select" title="音乐平台">
+                            <option value="netease" selected>网易云</option>
+                            <option value="tencent">QQ音乐</option>
+                        </select>
                         <input type="text" id="playlist-input" placeholder="输入网易云歌单ID...">
                         <button id="playlist-btn" type="button"><i class="ri-play-list-2-line"></i>歌单</button>
                         <button id="parse-btn">解析</button>
@@ -37,7 +43,7 @@
                 <div class="player-content">
                     <div class="album-section">
                         <div class="album-cover">
-                            <img id="cover" src="https://api.qijieya.cn/meting/?server=netease&type=pic&id=109951165994484307" alt="album cover">
+                            <img id="cover" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Crect width='200' height='200' fill='%23eef1f8'/%3E%3Ctext x='50%25' y='50%25' fill='%234f6ef7' font-size='72' text-anchor='middle' dominant-baseline='middle'%3E%E2%99%AA%3C/text%3E%3C/svg%3E" alt="album cover">
                         </div>
                         <div class="song-info">
                             <h2 id="song-name">歌曲名称</h2>
@@ -71,7 +77,7 @@
                                 <div class="mode-menu" id="mode-menu">
                                     <button type="button" class="mode-option" data-mode="sequential"><i class="ri-list-unordered"></i>顺序播放</button>
                                     <button type="button" class="mode-option" data-mode="shuffle"><i class="ri-shuffle-line"></i>随机播放</button>
-                                    <button type="button" class="mode-option" data-mode="loop"><i class="ri-repeat-line"></i>循环播放</button>
+                                    <button type="button" class="mode-option" data-mode="loop"><i class="ri-repeat-one-line"></i>单曲循环</button>
                                 </div>
                             </div>
                         </div>
@@ -112,8 +118,8 @@
         </div>
     </div>
     <audio id="audio" src=""></audio>
-    <!-- 播放配置（音质等级，见 config.js） -->
-    <script src="config.js"></script>
-    <script src="script.js"></script>
+    <!-- API 配置（歌曲接口 / 歌单弹窗接口，见 config.js） -->
+    <script src="config.js?v=20260810b"></script>
+    <script src="script.js?v=20260810b"></script>
 </body>
 </html> 

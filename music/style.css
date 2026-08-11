@@ -152,6 +152,27 @@ body {
     flex-shrink: 0;
 }
 
+/* 音乐平台下拉框（网易云 / QQ音乐） */
+#platform-select {
+    border: none;
+    background: none;
+    color: var(--text-primary);
+    font-size: 13.5px;
+    font-weight: 600;
+    cursor: pointer;
+    outline: none;
+    flex-shrink: 0;
+    padding: 4px 2px;
+    border-radius: var(--radius-sm);
+    -webkit-tap-highlight-color: transparent;
+    transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+#platform-select:hover {
+    color: var(--color-primary);
+    background: var(--bg-subtle);
+}
+
 #playlist-input {
     flex: 1;
     border: none;
@@ -403,27 +424,47 @@ body {
 
 .progress {
     flex: 1;
-    height: 5px;
-    background: rgba(0, 0, 0, 0.07);
-    border-radius: 3px;
+    height: 19px; /* 5px 轨道 + 上下 7px 点击热区 */
+    padding: 7px 0;
+    margin: -7px 0; /* 抵消 padding，布局占位仍为 5px */
+    background: transparent;
     cursor: pointer;
     position: relative;
     transition: height var(--transition-fast);
-    /* 注意：不能设置 overflow: hidden，否则 13px 的 hover 圆点超出 5px 轨道即被裁剪 */
+    /* 注意：不能设置 overflow: hidden，否则 13px 的 hover 圆点超出轨道即被裁剪 */
 }
 
-.progress:hover {
+/* 轨道背景（独立于容器，容器 padding 作为扩大后的点击热区） */
+.progress::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 5px;
+    transform: translateY(-50%);
+    background: rgba(0, 0, 0, 0.07);
+    border-radius: 3px;
+    transition: height var(--transition-fast);
+}
+
+.progress:hover::before {
     height: 7px;
 }
 
 .progress-current {
     position: absolute;
     left: 0;
-    top: 0;
-    height: 100%;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 5px;
     background: var(--color-primary);
     border-radius: 3px;
     transition: width 0.1s linear;
+}
+
+.progress:hover .progress-current {
+    height: 7px;
 }
 
 .progress-current::after {
@@ -886,8 +927,8 @@ body {
     transform: translate(-50%, -50%);
 }
 
-/* 切歌/加载中：封面呼吸提示（不覆盖 .album-cover::after 的描边） */
-.album-cover.loading img {
+/* 切歌/加载中：封面呼吸提示（专用类，避免触发通用 .loading 的变暗与 spinner） */
+.album-cover.buffering img {
     animation: coverPulse 1.1s ease-in-out infinite;
 }
 
@@ -1152,6 +1193,16 @@ body {
         font-size: 13px;
     }
 
+    /* 小屏隐藏"歌单"按钮文字，只保留图标，避免搜索区拥挤 */
+    #playlist-btn {
+        font-size: 0;
+        padding: 9px 11px;
+    }
+
+    #playlist-btn i {
+        font-size: 16px;
+    }
+
     .album-cover {
         width: 150px;
         height: 150px;
@@ -1237,17 +1288,8 @@ body {
     }
 }
 
-/* ≤ 380px — 极窄屏：搜索区按钮收缩，避免输入框被挤压 */
+/* ≤ 380px — 极窄屏：解析按钮进一步收缩 */
 @media (max-width: 380px) {
-    #playlist-btn {
-        font-size: 0; /* 隐藏"歌单"文字，只保留图标 */
-        padding: 9px 11px;
-    }
-
-    #playlist-btn i {
-        font-size: 16px;
-    }
-
     #parse-btn {
         padding: 8px 12px;
         font-size: 13px;
@@ -1462,6 +1504,13 @@ body {
     font-weight: 600;
 }
 
+.cat-chip:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    border-color: rgba(0, 0, 0, 0.06);
+    background: var(--bg-subtle);
+}
+
 /* 歌单网格 */
 .modal-playlists {
     flex: 1;
@@ -1658,11 +1707,17 @@ body {
    可访问性与用户偏好
    ============================================================ */
 
-/* 焦点可见 */
+/* 焦点可见：现代浏览器用 :focus-visible */
 :focus-visible {
     outline: 2px solid var(--color-primary);
     outline-offset: 2px;
     border-radius: 2px;
+}
+
+/* 旧浏览器（无 :focus-visible 支持）兜底：键盘导航保留焦点环 */
+button:focus {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
 }
 
 button:focus:not(:focus-visible) {
