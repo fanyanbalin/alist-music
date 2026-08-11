@@ -4,22 +4,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>音乐播放器</title>
-    <!-- 网站图标（音乐.ico，UTF-8 URL 编码形式，兼容各类静态服务器） -->
-    <link rel="icon" href="music.ico" type="image/x-icon">
-    <link rel="stylesheet" href="style.css?v=20260810b">
+	<link rel="icon" href="%E9%9F%B3%E4%B9%90.ico" type="image/x-icon">
+    <link rel="stylesheet" href="style.css?v=20260810a">
     <link href="vendor/remixicon/remixicon.css" rel="stylesheet">
 </head>
 <body>
-    <!-- 悬浮提示容器（成功/失败/信息提示） -->
     <div class="toast-container"></div>
     
     <div class="container">
-        <!-- 顶部欢迎提示（可关闭） -->
+        <!-- 添加顶部提示区域 -->
         <div class="welcome-tip">
             <div class="tip-content">
                 <i class="ri-music-2-line"></i>
                 <span>欢迎使用音乐播放器！请输入网易云歌单ID，例如：18205229314</span>
-                <button class="tip-close"><i class="ri-close-line"></i></button>
+                <button class="tip-close" type="button" aria-label="关闭提示"><i class="ri-close-line"></i></button>
             </div>
         </div>
 
@@ -29,10 +27,7 @@
                 <!-- 搜索区域 -->
                 <div class="search-section">
                     <div class="search-box">
-                        <select id="platform-select" title="音乐平台">
-                            <option value="netease" selected>网易云</option>
-                            <option value="tencent">QQ音乐</option>
-                        </select>
+                        <i class="ri-search-line"></i>
                         <input type="text" id="playlist-input" placeholder="输入网易云歌单ID...">
                         <button id="playlist-btn" type="button"><i class="ri-play-list-2-line"></i>歌单</button>
                         <button id="parse-btn">解析</button>
@@ -69,15 +64,15 @@
                         </div>
                         
                         <div class="controls">
-                            <button id="prev-btn"><i class="ri-skip-back-fill"></i></button>
-                            <button id="play-btn"><i class="ri-play-fill"></i></button>
-                            <button id="next-btn"><i class="ri-skip-forward-fill"></i></button>
+                            <button id="prev-btn" type="button" aria-label="上一首"><i class="ri-skip-back-fill"></i></button>
+                            <button id="play-btn" type="button" aria-label="播放或暂停"><i class="ri-play-fill"></i></button>
+                            <button id="next-btn" type="button" aria-label="下一首"><i class="ri-skip-forward-fill"></i></button>
                             <div class="mode-wrap" id="mode-wrap">
-                                <button type="button" id="mode-btn" class="mode-btn" title="播放模式"><i class="ri-list-unordered"></i></button>
+                                <button type="button" id="mode-btn" class="mode-btn" title="播放模式" aria-label="播放模式"><i class="ri-list-unordered"></i></button>
                                 <div class="mode-menu" id="mode-menu">
                                     <button type="button" class="mode-option" data-mode="sequential"><i class="ri-list-unordered"></i>顺序播放</button>
                                     <button type="button" class="mode-option" data-mode="shuffle"><i class="ri-shuffle-line"></i>随机播放</button>
-                                    <button type="button" class="mode-option" data-mode="loop"><i class="ri-repeat-one-line"></i>单曲循环</button>
+                                    <button type="button" class="mode-option" data-mode="loop"><i class="ri-repeat-line"></i>循环播放</button>
                                 </div>
                             </div>
                         </div>
@@ -102,7 +97,7 @@
         <div class="modal">
             <div class="modal-header">
                 <h3><i class="ri-disc-line"></i>歌单</h3>
-                <button type="button" class="modal-close" id="modal-close" title="关闭">
+                <button type="button" class="modal-close" id="modal-close" title="关闭" aria-label="关闭歌单弹窗">
                     <i class="ri-close-line"></i>
                 </button>
             </div>
@@ -118,8 +113,8 @@
         </div>
     </div>
     <audio id="audio" src=""></audio>
-    <!-- API 配置（歌曲接口 / 歌单弹窗接口，见 config.js） -->
-    <script src="config.js?v=20260810b"></script>
-    <script src="script.js?v=20260810b"></script>
+    <!-- 播放配置（音质等级，见 config.js） -->
+    <script src="config.js?v=20260810a"></script>
+    <script src="script.js?v=20260810a"></script>
 </body>
 </html> 

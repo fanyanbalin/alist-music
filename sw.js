@@ -1,10 +1,11 @@
-const CACHE_VERSION = 'dmusic-static-v4';
+const CACHE_VERSION = 'dmusic-static-v9';
 const STATIC_ASSETS = [
 	'./',
 	'./index.html',
-	'./alist.js',
 	'./manifest.json',
-	'./favicon.ico'
+	'./favicon.ico',
+	'./icon-192.png',
+	'./icon-512.png'
 ];
 
 self.addEventListener('install', function(event) {
@@ -31,6 +32,8 @@ self.addEventListener('fetch', function(event) {
 	if (event.request.method !== 'GET') return;
 	const requestUrl = new URL(event.request.url);
 	if (requestUrl.origin !== self.location.origin) return;
+	// 签名下载(/p/)与 AList 接口(/api/)不缓存：签名会过期，音频/歌词文件可能撑爆缓存
+	if (requestUrl.pathname.startsWith('/p/') || requestUrl.pathname.startsWith('/api/')) return;
 
 	event.respondWith(caches.match(event.request).then(function(cachedResponse) {
 		if (cachedResponse) return cachedResponse;
