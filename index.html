@@ -6,30 +6,101 @@
 		<title>AList音乐 - 在线音乐播放器</title>
 		<link rel="shortcut icon" href="favicon.ico" type="image/x-icon">
 		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta name="mobile-web-app-capable" content="yes" />
 		<meta name="apple-mobile-web-app-title" content="AList音乐" />
 		<meta name="theme-color" content="#0a161e">
 		<meta name="referrer" content="no-referrer">
-		<meta name="google" content="notranslate">
-		<link rel="apple-touch-icon" href="favicon.ico" />
-		<link href="https://mirrors.sustech.edu.cn/cdnjs/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-		<script>
-			// 必须在任何渲染之前执行，避免 Edge DevTools 下首帧 GPU 竞争导致鼠标卡顿
-			if (/Edg\//.test(navigator.userAgent)) {
-				document.documentElement.classList.add('edge-perf');
-			}
-		</script>
-		<script>
-			(function() {
-				const supportsPwa = /^(https?:)$/.test(location.protocol);
-				if (supportsPwa) {
-					const manifestLink = document.createElement('link');
-					manifestLink.rel = 'manifest';
-					manifestLink.href = 'manifest.json';
-					document.head.appendChild(manifestLink);
-				}
-			})();
-		</script>
-		<link rel="stylesheet" href="style.css?t=20">
+			<meta name="google" content="notranslate">
+			<style>[v-cloak]{display:none !important;}</style>
+				<link rel="apple-touch-icon" href="favicon.ico" />
+
+			<script>
+				(function() {
+					const cssSources = [
+						[
+							'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css',
+							'https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.0.0/css/all.min.css'
+						]
+					];
+					const jsSources = [
+						[
+							'https://cdnjs.cloudflare.com/ajax/libs/vue/3.5.17/vue.global.prod.js',
+							'https://cdn.jsdelivr.net/npm/vue@3.5.17/dist/vue.global.prod.js'
+						],
+						[
+							'https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js',
+							'https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js'
+						],
+						[
+							'https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js',
+							'https://cdn.jsdelivr.net/npm/localforage@1.10.0/dist/localforage.min.js'
+						],
+						[
+							'https://cdnjs.cloudflare.com/ajax/libs/axios/1.11.0/axios.min.js',
+							'https://cdn.jsdelivr.net/npm/axios@1.11.0/dist/axios.min.js'
+						],
+						[
+							'https://cdnjs.cloudflare.com/ajax/libs/blueimp-md5/2.19.0/js/md5.min.js',
+							'https://cdn.jsdelivr.net/npm/blueimp-md5@2.19.0/js/md5.min.js'
+						],
+						['utils.js?t=25'],
+						['alist.js?t=25']
+					];
+					const loadCss = (urls) => new Promise((resolve, reject) => {
+						const tryNext = (index) => {
+							if (index >= urls.length) return reject(new Error('Failed to load stylesheet'));
+							const link = document.createElement('link');
+							link.rel = 'stylesheet';
+							link.href = urls[index];
+							link.onload = () => resolve();
+							link.onerror = () => {
+								link.remove();
+								tryNext(index + 1);
+							};
+							document.head.appendChild(link);
+						};
+						tryNext(0);
+					});
+					const loadJs = (urls) => new Promise((resolve, reject) => {
+						const tryNext = (index) => {
+							if (index >= urls.length) return reject(new Error('Failed to load script'));
+							const script = document.createElement('script');
+							script.src = urls[index];
+							script.async = false;
+							script.onload = () => resolve();
+							script.onerror = () => {
+								script.remove();
+								tryNext(index + 1);
+							};
+							document.head.appendChild(script);
+						};
+						tryNext(0);
+					});
+					const boot = async () => {
+						try {
+							for (const urls of cssSources) await loadCss(urls);
+							for (const urls of jsSources) await loadJs(urls);
+							window.__aListMusicDepsReady = true;
+							if (typeof window.__maybeStartAListMusic === 'function') window.__maybeStartAListMusic();
+						} catch (error) {
+							console.error('资源加载失败:', error);
+						}
+					};
+					if (/Edg\//.test(navigator.userAgent)) {
+						document.documentElement.classList.add('edge-perf');
+					}
+					const supportsPwa = /^(https?:)$/.test(location.protocol);
+					if (supportsPwa) {
+						const manifestLink = document.createElement('link');
+						manifestLink.rel = 'manifest';
+						manifestLink.href = 'manifest.json';
+						document.head.appendChild(manifestLink);
+					}
+					boot();
+				})();
+			</script>
+			<link rel="stylesheet" href="style.css?t=20">
+
 	</head>
 	<body>
 		<div id="app" v-cloak>
@@ -311,16 +382,13 @@
 			<div>加载中...</div>
 		</div>
 
-		<script src="https://mirrors.sustech.edu.cn/cdnjs/ajax/libs/vue/3.5.17/vue.global.prod.js"></script>
-		<script src="https://mirrors.sustech.edu.cn/cdnjs/ajax/libs/pako/2.1.0/pako.min.js"></script>
-		<script src="https://mirrors.sustech.edu.cn/cdnjs/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
-		<script src="https://mirrors.sustech.edu.cn/cdnjs/ajax/libs/axios/1.11.0/axios.min.js"></script>
-		<script src="https://mirrors.sustech.edu.cn/cdnjs/ajax/libs/blueimp-md5/2.19.0/js/md5.min.js"></script>
-<script src="utils.js?t=25"></script>
-			<script src="alist.js?t=25"></script>
-		<script>
-			var currTimeFlag = Date.now()
-			var vueApp = Vue.createApp({
+				<script>
+
+				window.__maybeStartAListMusic = function() {
+					if (!window.__aListMusicDepsReady || window.vueApp) return;
+					var currTimeFlag = Date.now()
+					window.vueApp = Vue.createApp({
+
 				mixins: [mixin],
 				data() {
 					return {
@@ -1495,19 +1563,23 @@ const key = `${song.source}_${song.id}`;
 					window.removeEventListener('resize', this._resizeHandler);
 					if (this._songListObserver) this._songListObserver.disconnect();
 				},
-			}).mount('#app');
+					}).mount('#app');
+					window.__aListMusicMounted = true;
+				};
+				if (window.__aListMusicDepsReady) window.__maybeStartAListMusic();
 
-			if (/^(https?:)$/.test(location.protocol) && 'serviceWorker' in navigator) {
-				window.addEventListener('load', () => {
-					navigator.serviceWorker.register('./sw.js')
-						.then(function(e) {
-							console.log('[SW-DMUSIC] Service Worker success:', e)
-						})
-						.catch(function(e) {
-							console.log('[SW-DMUSIC] Service Worker failed:', e)
-						});
-				});
-			}
-		</script>
+				if (/^(https?:)$/.test(location.protocol) && 'serviceWorker' in navigator) {
+					window.addEventListener('load', () => {
+						navigator.serviceWorker.register('./sw.js')
+							.then(function(e) {
+								console.log('[SW-DMUSIC] Service Worker success:', e)
+								})
+								.catch(function(e) {
+									console.log('[SW-DMUSIC] Service Worker failed:', e)
+								});
+					});
+				}
+			</script>
+
 	</body>
 </html>
