@@ -49,15 +49,6 @@
 		};
 	}
 
-
-	function sanitizeRemoteUrl(value) {
-		const url = new URL(String(value || '').trim());
-		if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLocalHost(url.hostname))) {
-			throw new Error('资源链接必须使用 HTTPS；仅本机资源允许 HTTP');
-		}
-		return url.toString();
-	}
-
 	function sanitizeDownloadUrl(value) {
 		const url = new URL(String(value || '').trim());
 		if (url.protocol === 'http:' || url.protocol === 'https:') {
@@ -81,19 +72,22 @@
 	}
 
 	async function scanAListTree(rootPath, listDirectory, options = {}) {
-		const maxDepth = options.maxDepth || DEFAULT_SCAN_DEPTH;
-		const concurrency = options.concurrency || DEFAULT_SCAN_CONCURRENCY;
-		let currentLevel = [normalizeMusicPath(rootPath)];
+		const maxDepth = Number.isInteger(options.maxDepth) && options.maxDepth >= 0 ? options.maxDepth : DEFAULT_SCAN_DEPTH;
+		const concurrency = Number.isInteger(options.concurrency) && options.concurrency > 0 ? options.concurrency : DEFAULT_SCAN_CONCURRENCY;
+		let currentLevel = [{ path: normalizeMusicPath(rootPath), depth: 0 }];
 		const files = [];
 		const errors = [];
+		const truncatedDirectories = [];
 
-		for (let depth = 1; depth <= maxDepth && currentLevel.length; depth++) {
-			const levelResults = await mapWithConcurrency(currentLevel, concurrency, async path => {
+		// maxDepth is relative to rootPath: rootPath is depth 0 and is always listed.
+		// Directories discovered below maxDepth are reported instead of being silently skipped.
+		while (currentLevel.length) {
+			const levelResults = await mapWithConcurrency(currentLevel, concurrency, async directory => {
 				try {
-					const content = await listDirectory(path);
-					return { path, content: Array.isArray(content) ? content : [] };
+					const content = await listDirectory(directory.path);
+					return { ...directory, content: Array.isArray(content) ? content : [] };
 				} catch (error) {
-					return { path, error };
+					return { ...directory, error };
 				}
 			});
 			const nextLevel = [];
@@ -105,7 +99,8 @@
 				for (const entry of result.content) {
 					const entryPath = `${result.path}/${entry.name}`.replace(/\/{2,}/g, '/');
 					if (entry.is_dir) {
-						if (depth < maxDepth) nextLevel.push(entryPath);
+						if (result.depth < maxDepth) nextLevel.push({ path: entryPath, depth: result.depth + 1 });
+						else truncatedDirectories.push(entryPath);
 					} else {
 						files.push({
 							name: entry.name,
@@ -125,7 +120,7 @@
 			error.scanErrors = errors;
 			throw error;
 		}
-		return { files, errors };
+		return { files, errors, truncatedDirectories };
 	}
 
 	function shuffleIndexes(length, random = Math.random) {
@@ -173,6 +168,10 @@
 		if (status) status.hidden = true;
 	}
 
+	let configRequest = null;
+	let configSubmit = null;
+	let configCancel = null;
+
 	function reopenAListConfig(message = '') {
 		const dialog = document.getElementById('alist-config-dialog');
 		const errorNode = document.getElementById('alist-config-error');
@@ -184,7 +183,8 @@
 	}
 
 	function requestAListConfig(savedConfig) {
-		return new Promise(resolve => {
+		if (configRequest) return configRequest;
+		configRequest = new Promise(resolve => {
 			const dialog = document.getElementById('alist-config-dialog');
 			const form = document.getElementById('alist-config-form');
 			const errorNode = document.getElementById('alist-config-error');
@@ -199,21 +199,27 @@
 			fields.username.value = savedConfig && savedConfig.username || '';
 			fields.password.value = '';
 			errorNode.textContent = '';
-			const submit = event => {
+			configSubmit = event => {
 				event.preventDefault();
 				try {
 					const config = validateAListConfig(Object.fromEntries(new FormData(form)));
-					form.removeEventListener('submit', submit);
+					form.removeEventListener('submit', configSubmit);
+					dialog.removeEventListener('cancel', configCancel);
+					configSubmit = configCancel = null;
+					configRequest = null;
 					dialog.close();
 					resolve(config);
 				} catch (error) {
 					errorNode.textContent = error.message;
 				}
 			};
-			form.addEventListener('submit', submit);
-			dialog.showModal();
+			configCancel = event => event.preventDefault();
+			form.addEventListener('submit', configSubmit);
+			dialog.addEventListener('cancel', configCancel);
+			if (!dialog.open) dialog.showModal();
 			setTimeout(() => (savedConfig && savedConfig.baseUrl ? fields.password : fields.baseUrl).focus(), 0);
 		});
+		return configRequest;
 	}
 
 	const api = {
@@ -226,7 +232,6 @@
 		requestAListConfig,
 		reopenAListConfig,
 		sanitizeDownloadUrl,
-		sanitizeRemoteUrl,
 		scanAListTree,
 		showBootError,
 		shuffleIndexes,

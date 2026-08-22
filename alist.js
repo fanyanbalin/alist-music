@@ -1,5 +1,4 @@
 window.AList = {
-	getToken: () => window.alistToken || null,
 	getApiToken: () => request.post('/api/auth/login', {
 		username: alist[2],
 		password: alist[3]
@@ -23,6 +22,10 @@ window.AList = {
 			console.warn(`曲库扫描完成，但有 ${result.errors.length} 个目录读取失败`, result.errors);
 			showNotification(`${result.errors.length} 个目录读取失败，已加载其余歌曲`, 'warning', 5);
 		}
+		if (result.truncatedDirectories.length) {
+			console.warn(`曲库扫描达到最大相对深度 5，${result.truncatedDirectories.length} 个目录未扫描`, result.truncatedDirectories);
+			showNotification(`${result.truncatedDirectories.length} 个深层目录因扫描深度限制未加载`, 'warning', 6);
+		}
 		return result.files;
 	}
 };
@@ -33,9 +36,26 @@ window.withVueApp = function(callback, retry = 0) {
 	setTimeout(() => window.withVueApp(callback, retry + 1), 50);
 };
 
-function getAListScopeKey(name) {
-	const scope = window.alist ? `${alist[0]}|${alist[1]}|${alist[2]}` : 'default';
-	return `${name}_${md5(scope)}`;
+function configureAListScope() {
+	window.cacheKey = {
+		lyricHistory: getAListScopeKey('alist_lyricHistory'),
+		coverHistory: getAListScopeKey('alist_coverHistory'),
+		playMode: getAListScopeKey('alist_playMode'),
+		fontSize: 'dm_fontSize',
+		currInd: getAListScopeKey('alist_currInd'),
+		currTime: getAListScopeKey('alist_currTime'),
+		playbackSongKey: getAListScopeKey('alist_playbackSongKey'),
+		playbackState: getAListScopeKey('alist_playbackState')
+	};
+	window.songAssetCache = createSongAssetCache();
+}
+
+function createAListAuthError(cause) {
+	const error = new Error('AList 认证失败，请检查登录凭据后重试');
+	error.name = 'AListAuthenticationError';
+	error.code = 'ALIST_AUTHENTICATION_FAILED';
+	if (cause) error.cause = cause;
+	return error;
 }
 
 function isMusic(val) {
@@ -85,7 +105,7 @@ window.isAList = true;
 	}
 	AppCore.hideBootStatus();
 	const stored = await getStorage('alist_config');
-	let savedConfig = stored && !Array.isArray(stored) ? stored : null;
+	let savedConfig = stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : null;
 
 	while (true) {
 		const config = await AppCore.requestAListConfig(savedConfig);
@@ -97,6 +117,9 @@ window.isAList = true;
 		toggleLoading(true);
 		try {
 			window.alist = [config.baseUrl, config.musicPath, config.username, config.password];
+			configureAListScope();
+			window.__aListMusicScopeReady = true;
+			if (window.__maybeStartAListMusic) window.__maybeStartAListMusic();
 			await setStorage('alist_config', savedConfig);
 			window.AListUrl = config.baseUrl;
 			const musicListCacheKey = getAListScopeKey('alist_MusicList');
@@ -107,26 +130,32 @@ window.isAList = true;
 			request.interceptors.response.use(
 				async response => {
 					const data = response.data;
-					if (data && data.code === 401 && shouldRelogin(response.config)) {
+					if (data && data.code === 401) {
+						if (!shouldRelogin(response.config)) return Promise.reject(createAListAuthError());
 						response.config._alistRetried = true;
-						const token = await relogin();
-						if (token) {
+						try {
+							const token = await relogin();
 							response.config.headers = response.config.headers || {};
 							response.config.headers.Authorization = token;
 							return request(response.config);
+						} catch (error) {
+							return Promise.reject(createAListAuthError(error));
 						}
 					}
 					return data;
 				},
 				async error => {
 					const status = error && error.response && error.response.status;
-					if (status === 401 && shouldRelogin(error.config)) {
+					if (status === 401) {
+						if (!shouldRelogin(error.config)) return Promise.reject(createAListAuthError(error));
 						error.config._alistRetried = true;
-						const token = await relogin();
-						if (token) {
+						try {
+							const token = await relogin();
 							error.config.headers = error.config.headers || {};
 							error.config.headers.Authorization = token;
 							return request(error.config);
+						} catch (reloginError) {
+							return Promise.reject(createAListAuthError(reloginError));
 						}
 					}
 					return Promise.reject(error);
@@ -135,13 +164,13 @@ window.isAList = true;
 			window.relogin = function() {
 				if (reloginPromise) return reloginPromise;
 				reloginPromise = AList.getApiToken().then(token => {
-					if (!token) return null;
+					if (!token) throw createAListAuthError();
 					window.alistToken = token;
 					request.defaults.headers.Authorization = token;
 					return token;
 				}).catch(error => {
 					console.warn('AList 重新登录失败', error);
-					return null;
+					throw createAListAuthError(error);
 				}).finally(() => {
 					reloginPromise = null;
 				});
@@ -152,7 +181,8 @@ window.isAList = true;
 			window.alistToken = token;
 			request.defaults.headers.Authorization = token;
 
-			window.musicList = await getStorage(musicListCacheKey);
+			const storedMusicList = await getStorage(musicListCacheKey);
+			window.musicList = Array.isArray(storedMusicList) ? storedMusicList : null;
 			if (!musicList) {
 				const songs = await AList.listAllSong(alist[1]);
 				if (!songs || !songs.length) throw new Error('没有找到可播放歌曲，请检查音乐路径和目录权限');
@@ -164,7 +194,8 @@ window.isAList = true;
 				app.searchResults = musicList;
 			});
 
-			window.singers = await getStorage(singerCacheKey);
+			const storedSingers = await getStorage(singerCacheKey);
+			window.singers = Array.isArray(storedSingers) ? storedSingers : null;
 			if (!singers) {
 				try {
 					const singerFile = `${alist[1]}/search.json`;
@@ -201,25 +232,7 @@ window.isAList = true;
 	}
 })();
 	if (isAList) {
-	window.cacheKey = {
-		lyricHistory: 'alist_lyricHistory',
-		coverHistory: 'alist_coverHistory',
-		playMode: 'alist_playMode',
-		fontSize: 'dm_fontSize',
-		currInd: 'alist_currInd',
-		currTime: 'alist_currTime',
-		playbackSongKey: 'alist_playbackSongKey',
-		playbackState: 'alist_playbackState',
-	}
-	window.songAssetCache = window.songAssetCache || {
-		lyric: {},
-		lyricReq: {},
-		cover: {},
-		coverReq: {},
-		coverStoreLoaded: false,
-		coverStore: {}
-	}
-	window.getSongUrl = async function(song, br) {
+	window.getSongUrl = async function(song) {
 		try {
 			const response = await AList.getFileInfo(`${song.path}/${song.name}`);
 			const info = (response && response.data) || {};
@@ -242,7 +255,7 @@ window.isAList = true;
 		}
 	}
 	// 仅获取 AList 本地 LRC 歌词；网易云在线歌词由 loadLyrics 直接调用 getNetEaseSearch/getNetEaseLyric
-	window.getSongLyric = async function(song, specificSource) {
+	window.getSongLyric = async function(song) {
 		if (!song || song.source !== 'alist' || !song.lyric) return null;
 		const key = `${song.source}_${song.id}_local`;
 		if (songAssetCache.lyric[key]) return songAssetCache.lyric[key];
@@ -258,9 +271,8 @@ window.isAList = true;
 			}).then(res => res && res.message ? null : res);
 			if (lyric) songAssetCache.lyric[key] = lyric;
 			return lyric;
-		} catch (e) {
-			console.debug(e);
-			return null;
+					} catch (e) {
+				return null;
 		} finally {
 			delete songAssetCache.lyricReq[key];
 		}
@@ -283,7 +295,7 @@ window.isAList = true;
 			_autoLrcUploaded.add(idKey);
 			// 更新内存曲库缓存中的歌词路径
 			if (typeof musicList !== 'undefined' && musicList) {
-				let item = musicList.find(x => x.id == idKey);
+				const item = musicList.find(x => x.id === idKey);
 				if (item) { item.lyric = lrcPath; setStorage(getAListScopeKey('alist_MusicList'), musicList); }
 			}
 			return { success: true, path: lrcPath };
@@ -313,7 +325,8 @@ window.isAList = true;
 		const key = `${song.source}_${song.id}`;
 		if (songAssetCache.cover[key]) return songAssetCache.cover[key];
 		if (!songAssetCache.coverStoreLoaded) {
-			songAssetCache.coverStore = await getStorage(cacheKey.coverHistory) || {};
+			const storedCoverHistory = await getStorage(cacheKey.coverHistory);
+			songAssetCache.coverStore = storedCoverHistory && typeof storedCoverHistory === 'object' && !Array.isArray(storedCoverHistory) ? storedCoverHistory : {};
 			songAssetCache.coverStoreLoaded = true;
 		}
 		if (songAssetCache.coverStore[key]) {
@@ -355,18 +368,16 @@ window.isAList = true;
 		return songAssetCache.coverReq[key];
 	}
 	window.searchMusicBind = async function(keyword, source) {
-		// 空关键词：显示全部曲库（用于"全部歌手"筛选）
-		if (!keyword || !keyword.trim()) {
-			if (Array.isArray(musicList)) {
-				this.searchResults = musicList;
-			} else {
-				return showNotification('曲库加载中，请稍候再试', 'info');
-			}
-			return;
-		}
 		if (!Array.isArray(musicList)) return showNotification('曲库加载中，请稍候再试', 'info');
-		this.searchResults = musicList.filter(item => item.name.toLowerCase().includes(keyword.toLowerCase()) ||
-			item.path.toLowerCase().includes(keyword.toLowerCase()))
+		const query = String(keyword || '').trim().toLowerCase();
+		const sourceFilter = String(source || '').trim().toLowerCase();
+		this.searchResults = musicList.filter(item => {
+			const artist = Array.isArray(item.artist) ? item.artist.join(' ') : (item.artist || '');
+			const fields = [item.name, item.path, artist, item.album].map(value => String(value || '').toLowerCase());
+			const matchesQuery = !query || fields.some(value => value.includes(query));
+			const matchesSource = !sourceFilter || String(artist).toLowerCase().includes(sourceFilter);
+			return matchesQuery && matchesSource;
+		});
 		if (!this.searchResults.length) {
 			return showNotification('未找到相关歌曲，请尝试其他关键词', 'warning');
 		}
@@ -389,17 +400,28 @@ window.isAList = true;
 		}
 	}
 	window.sourceChangeBind = async function() {
-		this.searchKeyword = this.selectedSource
-		this.searchMusic()
+		this.searchMusic();
 	}
 	window.resetAlist = async function() {
 		if (!confirm('确定要重置Alist配置吗？')) return;
-		// 同时清理 scoped token 与曲库/歌手缓存，避免旧 token 残留导致静默失败
 		window.alistToken = null;
-		delete request.defaults.headers.Authorization;
-		setStorage('alist_config', null)
-		setStorage(getAListScopeKey('alist_MusicList'), null)
-		setStorage(getAListScopeKey('alist_options'), null)
-		location.reload()
+		if (window.request && request.defaults && request.defaults.headers) delete request.defaults.headers.Authorization;
+		const indexedKeys = [
+			'alist_config',
+			getAListScopeKey('alist_MusicList'),
+			getAListScopeKey('alist_options'),
+			cacheKey.lyricHistory,
+			cacheKey.coverHistory
+		];
+		const localKeys = [cacheKey.playMode, cacheKey.currInd, cacheKey.currTime, cacheKey.playbackSongKey, cacheKey.playbackState];
+		window.songAssetCache = createSongAssetCache();
+		window._autoLrcUploaded = new Set();
+		window.musicList = null;
+		window.singers = null;
+		await Promise.all([
+			...indexedKeys.map(key => setStorage(key, null)),
+			...localKeys.map(key => Promise.resolve(localStorage.removeItem(key)))
+		]);
+		location.reload();
 	}
 }

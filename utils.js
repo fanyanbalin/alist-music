@@ -5,31 +5,23 @@ localforage.config({
 	storeName: 'gdmusic-store'
 });
 async function getStorage(key) {
-	const data = await localforage.getItem(key)
-	let text = null
-	if (data) {
-		try {
-			text = pako.inflate(data, {
-				to: 'string'
-			});
-			return JSON.parse(text)
-		} catch (error) {
-			console.log('parse error', error);
-			return text
-		}
+	const data = await localforage.getItem(key);
+	if (data === null || data === undefined) return null;
+	try {
+		const text = pako.inflate(data, { to: 'string' });
+		return JSON.parse(text);
+	} catch (error) {
+		console.warn(`getStorage 解析失败，已清除坏键: ${key}`, error);
+		await localforage.removeItem(key);
+		return null;
 	}
-	return text
 }
 
 function setStorage(key, val) {
 	if (!val && val !== 0) return localforage.removeItem(key);
 	const text = JSON.stringify(val);
 	const data = pako.deflate(new TextEncoder().encode(text), { level: 9 });
-	return localforage.setItem(key, data).then(() => {
-		const size = data.length / 1024;
-		const originalSize = new TextEncoder().encode(text).length / 1024;
-		console.debug(`${key} 存储成功: ${originalSize.toFixed(2)}kb -> ${size.toFixed(2)}kb`);
-	}).catch(error => {
+	return localforage.setItem(key, data).catch(error => {
 		console.error(`${key} 存储失败`, error);
 		throw error;
 	});
@@ -47,7 +39,7 @@ function getStorageExp(key) {
 	if (!itemStr) return null;
 	try {
 		const item = JSON.parse(itemStr);
-		return Date.now() < item.exp || item.exp == 0 ? item.val : localStorage.removeItem(key);
+		return Date.now() < item.exp || item.exp === 0 ? item.val : localStorage.removeItem(key);
 	} catch (e) {
 		// 数据损坏：移除坏键，返回 null，避免 Vue 初始化崩溃
 		console.warn(`getStorageExp 解析失败，已清除坏键: ${key}`, e);
@@ -134,14 +126,21 @@ window.searchOptions = [{
 	k: "全部",
 	v: ""
 }]
-window.songAssetCache = window.songAssetCache || {
-	lyric: {},
-	lyricReq: {},
-	cover: {},
-	coverReq: {},
-	coverStore: {},
-	coverStoreLoaded: false
+window.getAListScopeKey = function(name) {
+	const scope = window.alist ? `${alist[0]}|${alist[1]}|${alist[2]}` : 'default';
+	return `${name}_${md5(scope)}`;
 }
+window.createSongAssetCache = function() {
+	return {
+		lyric: {},
+		lyricReq: {},
+		cover: {},
+		coverReq: {},
+		coverStore: {},
+		coverStoreLoaded: false
+	};
+}
+window.songAssetCache = window.createSongAssetCache();
 window.requestNcmApi = async function(path, params = {}, options = {}) {
 	const { timeout = 10000, isValid } = options;
 	const searchParams = new URLSearchParams(params);
@@ -156,13 +155,11 @@ window.requestNcmApi = async function(path, params = {}, options = {}) {
 				const data = JSON.parse(text);
 				if (isValid && isValid(data)) return data;
 			} catch (parseError) {
-				console.debug('错误响应不是 JSON', parseError);
 			}
 			throw new Error(`HTTP status: ${res.status}`);
 		}
 		return JSON.parse(text);
 	} catch (error) {
-		console.debug(`requestNcmApi ${path} failed:`, params, error);
 		return {
 			__error: true,
 			message: error && error.name === 'AbortError' ? '请求超时' : (error && error.message ? error.message : String(error))
@@ -183,7 +180,6 @@ window.getNetEaseLyric = async function(id, timeout = 10000) {
 		if (!text || /暂无歌词|Searching|No lyrics|not found/i.test(text) || /^\s*</.test(text)) return null;
 		return text;
 	} catch (error) {
-		if (error.name !== 'AbortError') console.debug('获取歌词失败:', error);
 		return null;
 	} finally {
 		clearTimeout(timer);

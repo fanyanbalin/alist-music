@@ -15,16 +15,16 @@
 		<style>[v-cloak]{display:none !important;}</style>
 		<link rel="apple-touch-icon" href="favicon.ico" />
 		<link rel="stylesheet" href="vendor/fontawesome.min.css">
-		<link rel="stylesheet" href="style.css?t=2">
+		<link rel="stylesheet" href="style.css?t=6">
 		<script defer src="vendor/vue.global.prod.js"></script>
 		<script defer src="vendor/pako.min.js"></script>
 		<script defer src="vendor/localforage.min.js"></script>
 		<script defer src="vendor/axios.min.js"></script>
 		<script defer src="vendor/md5.min.js"></script>
-		<script defer src="app-core.js?t=2"></script>
-		<script defer src="utils.js?t=2"></script>
-		<script defer src="alist.js?t=2"></script>
-		<script defer src="app.js?t=2"></script>
+		<script defer src="app-core.js?t=6"></script>
+		<script defer src="utils.js?t=6"></script>
+		<script defer src="alist.js?t=6"></script>
+		<script defer src="app.js?t=6"></script>
 
 	</head>
 	<body>
@@ -38,12 +38,12 @@
 				<button id="boot-reload" type="button">重新加载</button>
 			</div>
 		</div>
-		<dialog id="alist-config-dialog" class="config-dialog">
+		<dialog id="alist-config-dialog" class="config-dialog" aria-labelledby="alist-config-title">
 			<form id="alist-config-form" method="dialog">
 				<header class="config-dialog-header">
 					<div class="config-dialog-mark" aria-hidden="true"><i class="fas fa-server"></i></div>
 					<div>
-						<h2>连接 AList</h2>
+						<h2 id="alist-config-title">连接 AList</h2>
 						<p>填写曲库信息后即可开始播放</p>
 					</div>
 				</header>
@@ -77,19 +77,15 @@
 			<div class="bg-animation"></div>
 			<div class="bg-cover" :style="bgCoverStyle"></div>
 			<div class="bg-overlay"></div>
-			<div class="flt-tool">
-				<i class="fas fa-search" @click="goTo('.content-section')"></i><i class="fas fa-circle-play"
-					@click="goTo('.player-section')"></i>
-				<i class="fas fa-music" @click="goTo('.lyrics-section')"></i>
-			</div>
+			<div class="flt-tool" aria-label="页面导航">
+					<button type="button" aria-label="搜索音乐" @click="goTo('.content-section')"><i class="fas fa-search" aria-hidden="true"></i></button><button type="button" aria-label="播放器" @click="goTo('.player-section')"><i class="fas fa-circle-play" aria-hidden="true"></i></button><button type="button" aria-label="歌词" @click="goTo('.lyrics-section')"><i class="fas fa-music" aria-hidden="true"></i></button>
+				</div>
 			<!-- 顶部导航 -->
 			<nav class="navbar">
 				<div class="nav-container">
 					<div class="logo">
 						<div class="cursor"><i class="fas fa-music"></i><span>AList音乐</span></div>
-						<div class="m"><i class="fas fa-step-backward" @click="prevSong"></i><i
-								:class="isPlaying ? 'fas fa-pause' : 'fas fa-play'" @click="togglePlay"></i><i
-								class="fas fa-step-forward" @click="nextSong"></i></div>
+						<div class="m"><button type="button" aria-label="上一首" @click="prevSong"><i class="fas fa-step-backward"></i></button><button type="button" :aria-label="isPlaying ? '暂停' : '播放'" @click="togglePlay"><i :class="isPlaying ? 'fas fa-pause' : 'fas fa-play'"></i></button><button type="button" aria-label="下一首" @click="nextSong"><i class="fas fa-step-forward"></i></button></div>
 					</div>
 					<div class="search-container">
 						<div class="search-wrapper">
@@ -98,7 +94,7 @@
 							<select class="source-select" aria-label="歌手筛选" v-model="selectedSource" @change="sourceChange">
 								<option v-for="item in options" :value="item.v">{{ item.k }}</option>
 							</select>
-							<button class="search-btn" @click="searchMusic" aria-label="搜索"><i class="fas fa-search" aria-hidden="true"></i></button>
+							<button type="button" class="search-btn" @click="searchMusic" aria-label="搜索"><i class="fas fa-search" aria-hidden="true"></i></button>
 						</div>
 					</div>
 				</div>
@@ -112,11 +108,9 @@
 							<i class="fas fa-list-ol" aria-hidden="true"></i>
 						</button>AList曲库
 						<span><template v-if="searchResults && searchResults.length">[ 共 {{ searchResults.length }} 条 ]</template></span>
-						<i class="fas fa-arrow-up cursor" v-show="searchResults && searchResults.length > 10"
-							@click="toTopList(true)" title="滚动到顶部"></i>
-						<i class="fas fa-location-crosshairs cursor" @click="focusList(true)"
-							title="定位当前歌曲"></i>
-						<i class="fas fa-rotate cursor" @click="refresh" title="刷新此列表"></i>
+						<button type="button" class="icon-btn" v-show="searchResults && searchResults.length > 10" @click="toTopList(true)" title="滚动到顶部" aria-label="滚动到顶部"><i class="fas fa-arrow-up"></i></button>
+						<button type="button" class="icon-btn" @click="focusList(true)" title="定位当前歌曲" aria-label="定位当前歌曲"><i class="fas fa-location-crosshairs"></i></button>
+						<button type="button" class="icon-btn" @click="refresh" title="刷新此列表" aria-label="刷新此列表"><i class="fas fa-rotate"></i></button>
 					</h2>
 					<div class="search-results" id="searchResults">
 						<div class="empty-state" v-if="!searchResults.length">
@@ -124,7 +118,7 @@
 							<div>在上方搜索框输入关键词开始搜索音乐</div>
 						</div>
 						<div v-for="(song, index) in searchResults" :key="`${song.source}_${song.id}`" class="song-item"
-							:class="{ active: currIndSh === index }" @click="playSong(index, true)">
+								:class="{ active: currIndSh === index }" role="button" tabindex="0" @click="playSong(index, true)" @keydown.enter.prevent="playSong(index, true)" @keydown.space.prevent="playSong(index, true)">
 							<div class="song-index">{{ (index + 1).toString().padStart(2, '0') }}</div>
 							<div class="song-info">
 								<div class="song-name">{{ parseSongDisplayInfo(song).title }}</div>
@@ -133,16 +127,16 @@
 								</div>
 							</div>
 							<div class="song-actions">
-								<button class="action-btn" @click.stop="downloadSong(index, true)" title="下载音乐">
+								<button type="button" class="action-btn" @click.stop="downloadSong(index)" title="下载音乐" aria-label="下载音乐">
 									<i class="fas fa-download"></i>
 								</button>
-								<button class="action-btn" v-show="!isMoble" @click.stop="downloadLyric(index, true)"
-								title="下载歌词">
+								<button type="button" class="action-btn" v-show="!isMobile" @click.stop="downloadLyric(index)"
+								aria-label="下载歌词" title="下载歌词">
 								<i class="fas fa-file-text"></i>
 							</button>
 						</div>
 					</div>
-					</div>
+				</div>
 				</div>
 				<!-- 播放器区域 -->
 				<div class="player-section wrap-box">
@@ -157,26 +151,26 @@
 						</div>
 					</div>
 
-					<div class="player-controls">
-						<button class="control-btn small" @click="toggleMode"
-							:title="playMode == 'random' ? '随机播放' : playMode == 'loop' ? '循环播放' : '单曲循环'">
-							<i class="fas"
-								:class="{ 'fa-shuffle': playMode == 'random', 'fa-repeat': playMode == 'loop', 'fa-1': playMode == 'one' }"></i>
-						</button>
-						<button class="control-btn small" @click="prevSong" title="上一首 [Ctrl + ←]">
-							<i class="fas fa-step-backward"></i>
-						</button>
-						<button class="control-btn play-btn" @click="togglePlay"
-							:title="isPlaying ? '暂停 [Space]' : '播放 [Space]'">
-							<i :class="isPlaying ? 'fas fa-pause' : 'fas fa-play'"></i>
-						</button>
-						<button class="control-btn small" @click="nextSong" title="下一首 [Ctrl + →]">
-							<i class="fas fa-step-forward"></i>
-						</button>
-						<button class="control-btn small" @click="reloadCurrentSong()" title="重新获取网络链接">
-							<i class="fas fa-globe"></i>
-						</button>
-					</div>
+															<div class="player-controls">
+							<button type="button" class="control-btn small" @click="toggleMode" aria-label="切换播放模式"
+								:title="playMode == 'random' ? '随机播放' : playMode == 'loop' ? '循环播放' : '单曲循环'">
+								<i class="fas"
+									:class="{ 'fa-shuffle': playMode == 'random', 'fa-repeat': playMode == 'loop', 'fa-1': playMode == 'one' }"></i>
+							</button>
+							<button type="button" class="control-btn small" @click="prevSong" aria-label="上一首" title="上一首 [Ctrl + ←]">
+								<i class="fas fa-step-backward"></i>
+							</button>
+							<button type="button" class="control-btn play-btn" @click="togglePlay"
+								:aria-label="isPlaying ? '暂停' : '播放'" :title="isPlaying ? '暂停 [Space]' : '播放 [Space]'">
+								<i :class="isPlaying ? 'fas fa-pause' : 'fas fa-play'"></i>
+							</button>
+							<button type="button" class="control-btn small" @click="nextSong" aria-label="下一首" title="下一首 [Ctrl + →]">
+								<i class="fas fa-step-forward"></i>
+							</button>
+							<button type="button" class="control-btn small" @click="reloadCurrentSong()" aria-label="重新获取网络链接" title="重新获取网络链接">
+								<i class="fas fa-globe"></i>
+							</button>
+						</div>
 					<div class="progress-container">
 						<input type="range" class="progress-slider" min="0" :max="totalTime || 0" step="0.1"
 							:value="currentTime" @input="applySeekTime(Number($event.target.value))"
@@ -187,16 +181,16 @@
 						</div>
 					</div>
 					<div class="volume-container">
-						<i :class="volumeIconClass" @click="setVolume(volume, true)"></i>
+					<button type="button" class="volume-icon icon-btn" :class="volumeIconClass" @click="setVolume(volume, true)" aria-label="静音或恢复音量"></button>
 						<input type="range" class="volume-slider" min="0" max="100" v-model="volume"
 							@input="setVolume(volume)" aria-label="音量">
 					</div>
 					<!-- 下载区域 -->
 					<div class="download-container">
-						<button class="download-btn" @click="downloadCurrentSong" :disabled="!canDownloadCurrent">
+						<button type="button" class="download-btn" @click="downloadCurrentSong" :disabled="!canDownloadCurrent">
 							<i class="fas fa-download"></i><span>下载音乐</span>
 						</button>
-						<button class="download-btn" @click="downloadCurrentLyric" :disabled="!canDownloadCurrent">
+						<button type="button" class="download-btn" @click="downloadCurrentLyric" :disabled="!canDownloadCurrent">
 							<i class="fas fa-file-text"></i><span>下载歌词</span>
 						</button>
 					</div>
@@ -209,35 +203,43 @@
 				<div class="right-section">
 					<div class="lyrics-section wrap-box"
 						:class="{ 'full': lyricFull, 'lyric-switching': lyricSwitching }"
-						:style="lyricSectionStyle">
+						:style="lyricSectionStyle" :role="lyricFull ? 'dialog' : undefined"
+						:aria-modal="lyricFull ? 'true' : undefined" :aria-label="lyricFull ? '大屏歌词' : undefined">
 
 						<div class="full-bg" v-if="lyricFull" :style="fullBgStyle"></div>
 						<div class="full-mask" v-if="lyricFull"></div>
 
-						<!-- 全屏时的顶部工具栏 -->
-						<div class="section-title full-toolbar" v-if="lyricFull">
-							<div class="toolbar-right">
-								<i class="fas cursor fa-rotate" v-if="!currentSong.lyric"
-									@click="reloadCurrentLyrics()" title="刷新歌词"></i>
-								<i class="fas cursor fa-upload" v-if="isAList && !currentSong.lyric && currentSong.raw && lyricHistory[currentSong.raw.source + '_' + currentSong.raw.id]"
-									@click="uploadLyric()" title="上传歌词到AList"></i>
-								<i class="fas cursor fa-plus" @click="setFontSize(true)" title="放大字号 [+]" style="margin-left: 4px;"></i>
-								<i class="fas cursor fa-minus" @click="setFontSize(false)" title="缩小字号 [-]"></i>
-								<i class="fas cursor fa-minimize" @click="lyricFull = false" title="退出全屏 [Esc]"></i>
+													<!-- 全屏时的顶部工具栏 -->
+							<div class="section-title full-toolbar" v-if="lyricFull">
+								<div class="toolbar-right">
+									<button type="button" class="full-tool-btn" v-if="!currentSong.lyric"
+										@click="reloadCurrentLyrics()" title="刷新歌词" aria-label="刷新歌词">
+										<i class="fas fa-rotate" aria-hidden="true"></i>
+									</button>
+									<button type="button" class="full-tool-btn" v-if="isAList && !currentSong.lyric && currentSong.raw && lyricHistory[currentSong.raw.source + '_' + currentSong.raw.id]"
+										@click="uploadLyric()" title="上传歌词到AList" aria-label="上传歌词到AList">
+										<i class="fas fa-upload" aria-hidden="true"></i>
+									</button>
+									<button type="button" class="full-tool-btn" @click="setFontSize(true)" title="放大字号 [+]" aria-label="放大歌词字号">
+										<i class="fas fa-plus" aria-hidden="true"></i>
+									</button>
+									<button type="button" class="full-tool-btn" @click="setFontSize(false)" title="缩小字号 [-]" aria-label="缩小歌词字号">
+										<i class="fas fa-minus" aria-hidden="true"></i>
+									</button>
+									<button type="button" ref="fullExitButton" class="full-tool-btn" @click="exitLyricFull" title="退出全屏 [Esc]" aria-label="退出大屏歌词">
+										<i class="fas fa-minimize" aria-hidden="true"></i>
+									</button>
+								</div>
 							</div>
-						</div>
 
 						<!-- 非全屏时的普通标题 -->
-						<h2 class="section-title" v-else>
-							<i class="fas fa-align-left" @click="reloadCurrentLyrics()"
-								title="强制请求歌词"></i><b>歌词</b>
-<span><i v-show="lyricsEnd">[ end: {{ formatTime(lyricsEnd) }} ]</i></span>
-						<i class="fas cursor fa-rotate" v-if="!currentSong.lyric"
-										@click="reloadCurrentLyrics()" title="刷新歌词"></i>
-							<i class="fas cursor" :class="[ lyricLock ? 'fa-lock' : 'fa-lock-open' ]"
-								@click="lyricLock = !lyricLock" :title="lyricLock ? '解锁歌词' : '锁定歌词'"></i>
-							<i class="fas cursor" :class="[ lyricFull ? 'fa-minimize' : 'fa-expand' ]"
-								@click="lyricFull = !lyricFull" title="[Alt+0]"></i>
+													<h2 class="section-title" v-else>
+								<button type="button" class="icon-btn" @click="reloadCurrentLyrics()" title="强制请求歌词" aria-label="强制请求歌词"><i class="fas fa-align-left" aria-hidden="true"></i></button><b>歌词</b>
+	<span><button type="button" class="icon-btn" v-show="lyricsEnd" aria-label="歌词结束时间">[ end: {{ formatTime(lyricsEnd) }} ]</button></span>
+							<button type="button" class="icon-btn" v-if="!currentSong.lyric" @click="reloadCurrentLyrics()" title="刷新歌词" aria-label="刷新歌词"><i class="fas fa-rotate" aria-hidden="true"></i></button>
+								<button type="button" class="icon-btn" @click="lyricLock = !lyricLock" :title="lyricLock ? '解锁歌词' : '锁定歌词'" :aria-label="lyricLock ? '解锁歌词' : '锁定歌词'"><i class="fas" :class="lyricLock ? 'fa-lock' : 'fa-lock-open'" aria-hidden="true"></i></button>
+							<button type="button" ref="fullEnterButton" class="icon-btn" @click="toggleLyricFull"
+								title="进入大屏歌词 [Alt+0]" aria-label="进入大屏歌词"><i class="fas fa-expand" aria-hidden="true"></i></button>
 						</h2>
 
 						<!-- 布局容器 -->
@@ -264,87 +266,91 @@
 										<i class="fas fa-spinner fa-pulse"></i>
 										<span>{{ lyricLoadingMsg || '正在获取歌词...' }}</span>
 									</div>
-									<div v-for="(lyric, index) in lyrics" :key="index" class="lyric-line"
-										:class="{ active: currentLyricIndex === index, cursor: !lyricLock }"
-										@click="seekToLyric(lyric.time)">{{ lyric.text }}</div>
+																		<button type="button" v-for="(lyric, index) in lyrics" :key="index" class="lyric-line"
+										:class="{ active: currentLyricIndex === index, cursor: !lyricLock }" :disabled="lyricLock" @click="seekToLyric(lyric.time)">{{ lyric.text }}</button>
 								</div>
 							</div>
 						</div>
-						<div class="full-bottom-bar" v-if="lyricFull">
-							<div class="full-progress-strip">
-								<span class="full-progress-time">{{ formatTime(currentTime) }}</span>
-								<div class="full-progress-track" @click.stop="seekProgress" title="跳转进度">
-									<div class="full-progress-bar">
-										<div class="full-progress-inner" :style="{ width: progress + '%' }"></div>
-									</div>
+													<div class="full-volume-backdrop" v-if="lyricFull && fullVolumeVisible"
+								@click="closeFullVolume" aria-hidden="true"></div>
+							<div class="full-bottom-bar" v-if="lyricFull">
+								<div class="full-progress-strip">
+									<span class="full-progress-time">{{ formatTime(currentTime) }}</span>
+									<input type="range" class="full-progress-slider" min="0" :max="totalTime || 0" step="0.1"
+										:value="currentTime" @input="applySeekTime(Number($event.target.value))"
+										:style="{ '--full-progress': progress + '%' }"
+										:aria-label="`播放进度 ${formatTime(currentTime)} / ${formatTime(totalTime)}`">
+									<span class="full-progress-time">{{ formatTime(totalTime) }}</span>
 								</div>
-								<span class="full-progress-time">{{ formatTime(totalTime) }}</span>
-							</div>
-							<div class="player-controls full-controls-row">
-								<button class="control-btn small" @click="toggleMode"
-									:title="playMode == 'random' ? '随机播放' : playMode == 'loop' ? '循环播放' : '单曲循环'">
-									<i class="fas"
-										:class="{ 'fa-shuffle': playMode == 'random', 'fa-repeat': playMode == 'loop', 'fa-1': playMode == 'one' }"></i>
-								</button>
-								<button class="control-btn small" @click="prevSong" title="上一首">
-									<i class="fas fa-step-backward"></i>
-								</button>
-								<button class="control-btn play-btn" @click.stop="togglePlay"
-									:title="isPlaying ? '暂停' : '播放'">
-									<i :class="isPlaying ? 'fas fa-pause' : 'fas fa-play'"></i>
-								</button>
-								<button class="control-btn small" @click="nextSong" title="下一首">
-									<i class="fas fa-step-forward"></i>
-								</button>
-								<div class="full-volume-wrap" :class="{ show: fullVolumeVisible }">
-									<div class="full-volume-panel" @click.stop>
-										<input type="range" class="full-volume-slider" min="0" max="100"
-											v-model="volume" @input="setVolume(volume)"
-											:title="'音量 ' + volume + '%'">
+								<div class="player-controls full-controls-row">
+									<button type="button" class="control-btn small" @click="toggleMode" aria-label="切换播放模式"
+										:title="playMode == 'random' ? '随机播放' : playMode == 'loop' ? '循环播放' : '单曲循环'">
+										<i class="fas"
+											:class="{ 'fa-shuffle': playMode == 'random', 'fa-repeat': playMode == 'loop', 'fa-1': playMode == 'one' }"></i>
+									</button>
+									<button type="button" class="control-btn small" @click="prevSong" aria-label="上一首" title="上一首">
+										<i class="fas fa-step-backward"></i>
+									</button>
+									<button type="button" class="control-btn play-btn" @click.stop="togglePlay"
+										:aria-label="isPlaying ? '暂停' : '播放'" :title="isPlaying ? '暂停' : '播放'">
+										<i :class="isPlaying ? 'fas fa-pause' : 'fas fa-play'"></i>
+									</button>
+									<button type="button" class="control-btn small" @click="nextSong" aria-label="下一首" title="下一首">
+										<i class="fas fa-step-forward"></i>
+									</button>
+									<div class="full-volume-wrap" :class="{ show: fullVolumeVisible }">
+										<div class="full-volume-panel" @click.stop>
+											<input type="range" class="full-volume-slider" min="0" max="100"
+												v-model="volume" @input="setVolume(volume)" aria-label="大屏音量"
+												:title="'音量 ' + volume + '%'">
+										</div>
+										<button type="button" class="control-btn small full-volume-btn" @click.stop="toggleFullVolume"
+											:aria-expanded="fullVolumeVisible" aria-label="调整音量" :title="'音量 ' + volume + '%'">
+											<i :class="volumeIconClass"></i>
+										</button>
 									</div>
-									<button class="control-btn small full-volume-btn" @click.stop="fullVolumeVisible = !fullVolumeVisible"
-										:title="'音量 ' + volume + '%'">
-										<i :class="volumeIconClass"></i>
+									<button type="button" ref="fullPlaylistToggle" class="control-btn small full-list-toggle" @click="toggleFullPlaylist"
+										:aria-expanded="fullPlaylistVisible" aria-label="显示或隐藏歌曲列表" aria-controls="full-playlist-dialog"
+										:title="fullPlaylistVisible ? '隐藏歌曲列表' : '显示歌曲列表'">
+										<i class="fas fa-list-ul"></i>
 									</button>
 								</div>
-								<button class="control-btn small full-list-toggle" @click="toggleFullPlaylist"
-									:title="fullPlaylistVisible ? '隐藏歌曲列表' : '显示歌曲列表'">
-									<i class="fas fa-list-ul"></i>
-								</button>
 							</div>
-						</div>
-						<div class="full-playlist-backdrop" v-if="lyricFull && fullPlaylistVisible"
-							@click="fullPlaylistVisible = false"></div>
-						<div class="full-playlist-panel" :class="{ show: fullPlaylistVisible }" v-if="lyricFull && fullPlaylistVisible" role="dialog" aria-modal="true" aria-label="当前曲库">
-							<div class="full-playlist-header">
-								<div>
-									<div class="full-playlist-title">{{ fullSongListTitle }}</div>
-									<div class="full-playlist-meta">共 {{ fullSongList.length }} 首</div>
-								</div>
-								<button type="button" class="icon-btn" @click="fullPlaylistVisible = false" title="关闭" aria-label="关闭歌曲列表"><i class="fas fa-xmark" aria-hidden="true"></i></button>
-							</div>
-							<div class="full-playlist-list">
-								<div class="full-playlist-empty" v-if="!fullSongList.length">暂无可选歌曲</div>
-								<div v-for="(song, index) in fullSongList" :key="`${song.source}_${song.id}`"
-									class="full-playlist-item"
-									:class="{ active: `${song.source}_${song.id}` === currentSong.key }"
-									@click="playFullSong(index)">
-									<div class="full-playlist-index">{{ index + 1 }}</div>
-									<div class="full-playlist-info">
-										<div class="full-playlist-name" :title="formatPlaylistTitle(song)">
-											{{ formatPlaylistTitle(song) }}
-										</div>
-										<div class="full-playlist-artist" v-if="formatPlaylistArtist(song)"
-											:title="formatPlaylistArtist(song)">
-											{{ formatPlaylistArtist(song) }}
-										</div>
+							<div class="full-playlist-backdrop" v-if="lyricFull && fullPlaylistVisible"
+								@click="closeFullPlaylist()"></div>
+							<div id="full-playlist-dialog" ref="fullPlaylistPanel" class="full-playlist-panel" :class="{ show: fullPlaylistVisible }"
+								v-if="lyricFull && fullPlaylistVisible" role="dialog" aria-modal="true" aria-label="当前曲库"
+								@keydown.tab="trapFullPlaylistFocus" @keydown.esc.stop.prevent="closeFullPlaylist()">
+								<div class="full-playlist-header">
+									<div>
+										<div class="full-playlist-title">{{ fullSongListTitle }}</div>
+										<div class="full-playlist-meta">共 {{ fullSongList.length }} 首</div>
 									</div>
-									<div class="full-playlist-tail">
-										<i class="fas" :class="`${song.source}_${song.id}` === currentSong.key ? 'fa-volume-high' : 'fa-angle-right'"></i>
-									</div>
+									<button ref="fullPlaylistClose" type="button" class="icon-btn" @click="closeFullPlaylist()" title="关闭" aria-label="关闭歌曲列表"><i class="fas fa-xmark" aria-hidden="true"></i></button>
+								</div>
+								<div class="full-playlist-list">
+									<div class="full-playlist-empty" v-if="!fullSongList.length">暂无可选歌曲</div>
+									<button type="button" v-for="(song, index) in fullSongList" :key="`${song.source}_${song.id}`"
+										class="full-playlist-item"
+										:class="{ active: `${song.source}_${song.id}` === currentSong.key }"
+										:aria-current="`${song.source}_${song.id}` === currentSong.key ? 'true' : undefined"
+										@click="playFullSong(index)">
+										<span class="full-playlist-index">{{ index + 1 }}</span>
+										<span class="full-playlist-info">
+											<span class="full-playlist-name" :title="formatPlaylistTitle(song)">
+												{{ formatPlaylistTitle(song) }}
+											</span>
+											<span class="full-playlist-artist" v-if="formatPlaylistArtist(song)"
+												:title="formatPlaylistArtist(song)">
+												{{ formatPlaylistArtist(song) }}
+											</span>
+										</span>
+										<span class="full-playlist-tail">
+											<i class="fas" aria-hidden="true" :class="`${song.source}_${song.id}` === currentSong.key ? 'fa-volume-high' : 'fa-angle-right'"></i>
+										</span>
+									</button>
 								</div>
 							</div>
-						</div>
 					</div>
 				</div>
 			</div>
