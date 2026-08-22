@@ -175,12 +175,13 @@ window.getNetEaseLyric = async function(id, timeout = 10000) {
 	try {
 		const url = `${METING_API_BASE}?server=netease&type=lrc&id=${encodeURIComponent(id)}`;
 		const res = await fetch(url, { signal: controller.signal });
-		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		if (!res.ok) throw new Error(`歌词接口 HTTP ${res.status}`);
 		const text = await res.text();
 		if (!text || /暂无歌词|Searching|No lyrics|not found/i.test(text) || /^\s*</.test(text)) return null;
 		return text;
 	} catch (error) {
-		return null;
+		if (error && error.name === 'AbortError') throw new Error('歌词接口请求超时');
+		throw error;
 	} finally {
 		clearTimeout(timer);
 	}
