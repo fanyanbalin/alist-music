@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 const CACHE_VERSION = 'alist-music-static-v12';
 const STATIC_ASSETS = [
 	'./',
@@ -7,6 +8,17 @@ const STATIC_ASSETS = [
 	'./utils.js?t=12',
 	'./alist.js?t=12',
 	'./app.js?t=12',
+=======
+const CACHE_VERSION = 'alist-music-static-v10';
+const STATIC_ASSETS = [
+	'./',
+	'./index.html',
+	'./style.css?t=10',
+	'./app-core.js?t=10',
+	'./utils.js?t=10',
+	'./alist.js?t=10',
+	'./app.js?t=10',
+>>>>>>> parent of 8c061e1 (update)
 	'./manifest.json',
 	'./favicon.ico',
 	'./icon-192.png',

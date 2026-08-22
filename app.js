@@ -960,22 +960,9 @@ window.__maybeStartAListMusic = function() {
 						this.lyricError = '';
 						this.lyrics = AppCore.parseLrc(lrcText);
 						this.lyricsEnd = this.lyrics.length ? this.lyrics[this.lyrics.length - 1].time : null;
-						this.updateLyricHighlight();
-						this.$nextTick(() => this.syncLyricScroll());
-					},
-					syncLyricScroll() {
-						const container = this.$refs.lyricsContainer;
-						if (!container) return;
-						if (this.currentLyricIndex < 0) {
-							container.scrollTop = 0;
-							return;
-						}
-						this.scrollToActiveLyric();
 					},
 					updateLyricHighlight() {
-						const audio = this.$refs.audioPlayer;
-						if (!audio) return;
-						const currentTime = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+						const currentTime = this.$refs.audioPlayer.currentTime;
 						let activeIndex = -1;
 
 						for (let i = 0; i < this.lyrics.length; i++) {
@@ -987,7 +974,7 @@ window.__maybeStartAListMusic = function() {
 						}
 						if (activeIndex === this.currentLyricIndex) return;
 						this.currentLyricIndex = activeIndex;
-						if (!this.lyricLock || activeIndex < 0) return;
+						if (!this.lyricLock) return;
 
 						this.scrollToActiveLyric();
 					},
@@ -997,16 +984,14 @@ window.__maybeStartAListMusic = function() {
 							const activeLine = container.children[this.currentLyricIndex];
 							if (!activeLine) return;
 
-							const containerRect = container.getBoundingClientRect();
-							const lineRect = activeLine.getBoundingClientRect();
 							const containerHeight = container.clientHeight;
-							const lineHeight = lineRect.height || activeLine.offsetHeight;
-							const lineOffsetTop = lineRect.top - containerRect.top + container.scrollTop;
+							const lineHeight = activeLine.offsetHeight;
+							const lineOffsetTop = activeLine.offsetTop;
 
-							const readingPosition = this.lyricFull ? 0.44 : 0.5;
-							const targetScrollTop = Math.max(0, lineOffsetTop - containerHeight * readingPosition + lineHeight / 2);
-							// Edge 下跳过 rAF 平滑滚动，减少 DevTools 打开时的渲染冲突
-							if (this.lyricSwitching || this.prefersReducedMotion() || /Edg\//.test(navigator.userAgent)) {
+																															const readingPosition = this.lyricFull ? 0.44 : 0.5;
+								const targetScrollTop = Math.max(0, lineOffsetTop - containerHeight * readingPosition + lineHeight / 2);
+								// Edge 下跳过 rAF 平滑滚动，减少 DevTools 打开时的渲染冲突
+								if (this.lyricSwitching || this.prefersReducedMotion() || /Edg\//.test(navigator.userAgent)) {
 								container.scrollTop = targetScrollTop;
 								return;
 							}
@@ -1210,10 +1195,10 @@ window.__maybeStartAListMusic = function() {
 					this._fetchCoverColors(this.displayCoverUrl);
 				}
 				this.lyricSwitching = true;
-					const syncLyricPosition = () => {
-						this.updateLyricHighlight();
-						if (this.lyricLock) this.syncLyricScroll();
-					};
+				const syncLyricPosition = () => {
+					this.updateLyricHighlight();
+					if (this.lyricLock) this.scrollToActiveLyric();
+				};
 				this.$nextTick(() => {
 					this._lyricLayoutRaf = requestAnimationFrame(() => {
 						this._lyricLayoutRaf = requestAnimationFrame(() => {
@@ -1310,7 +1295,11 @@ if (window.__aListMusicDepsReady && window.__aListMusicScopeReady) window.__mayb
 
 if (/^(https?:)$/.test(location.protocol) && 'serviceWorker' in navigator) {
 	window.addEventListener('load', () => {
+<<<<<<< HEAD
 		navigator.serviceWorker.register('./sw.js?t=12')
+=======
+		navigator.serviceWorker.register('./sw.js?t=10')
+>>>>>>> parent of 8c061e1 (update)
 			.then(function(registration) {
 				registration.update().catch(() => {});
 			})

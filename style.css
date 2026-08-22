@@ -1630,7 +1630,7 @@ html.lyric-full-open body {
 	scroll-behavior: auto;
 }
 
-.lyrics-section.full .lyric-line[aria-disabled="true"] {
+.lyrics-section.full .lyric-line:disabled {
 	opacity: 0.56;
 	color: rgba(255, 255, 255, 0.84);
 	-webkit-text-fill-color: rgba(255, 255, 255, 0.84);
@@ -1638,7 +1638,7 @@ html.lyric-full-open body {
 	cursor: default;
 }
 
-.lyrics-section.full .lyric-line.active[aria-disabled="true"] {
+.lyrics-section.full .lyric-line.active:disabled {
 	opacity: 1;
 	color: #fff;
 	-webkit-text-fill-color: #fff;
@@ -1921,7 +1921,7 @@ html.lyric-full-open body {
 
 	.lyrics-section.full .lyrics-full-layout {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr);
+		grid-template-columns: 1fr;
 		grid-template-rows: auto minmax(0, 1fr);
 		align-items: stretch;
 		gap: 8px;
@@ -1997,14 +1997,7 @@ html.lyric-full-open body {
 	.lyrics-section.full .lyric-line,
 	.lyrics-section.full .lyric-line.active {
 		width: 100%;
-		min-width: 0;
-		max-width: 100%;
-		padding-left: 12px;
-		padding-right: 12px;
-		font-size: 0.96em;
-		white-space: normal;
-		word-break: break-word;
-		overflow-wrap: anywhere;
+		max-width: calc(100vw - 24px);
 	}
 }
 
