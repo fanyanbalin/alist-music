@@ -79,28 +79,40 @@
 		return `${base}${raw.pathname.slice(proxyIndex)}${raw.search}`;
 	}
 
-	function resolveAListMediaUrl(info, options = {}) {
+	function resolveAListMediaUrls(info, options = {}) {
 		const data = info && typeof info === 'object' ? info : {};
 		const rawUrl = data.raw_url ? sanitizeDownloadUrl(data.raw_url) : null;
 		const signedProxyUrl = buildAListProxyUrl(options.baseUrl, options.filePath, data.sign, options.now);
-		if (options.pageProtocol !== 'https:') {
-			if (rawUrl) return rawUrl;
-			if (signedProxyUrl) return signedProxyUrl;
-			throw new Error('AList 未返回可用的音频地址');
-		}
+		const candidates = [];
+		const addCandidate = url => {
+			if (url && !candidates.includes(url)) candidates.push(url);
+		};
 
-		if (rawUrl) {
+		if (options.pageProtocol !== 'https:') {
+			addCandidate(rawUrl);
+			addCandidate(signedProxyUrl);
+		} else if (rawUrl) {
 			const raw = new URL(rawUrl);
-			if (raw.protocol === 'https:' && !isPrivateHost(raw.hostname)) return rawUrl;
-			if (signedProxyUrl) return signedProxyUrl;
 			const rewrittenProxyUrl = rewriteAListProxyOrigin(rawUrl, options.baseUrl);
-			if (rewrittenProxyUrl) return rewrittenProxyUrl;
-			if (raw.protocol === 'http:') {
+			if (raw.protocol === 'https:' && !isPrivateHost(raw.hostname)) addCandidate(rawUrl);
+			if (rewrittenProxyUrl) addCandidate(rewrittenProxyUrl);
+			else if (raw.protocol !== 'https:' || isPrivateHost(raw.hostname)) addCandidate(signedProxyUrl);
+			if (!candidates.length && raw.protocol === 'http:') {
 				throw new Error('AList 返回了仅支持 HTTP 的存储直链；请启用 AList Web 代理或为存储直链配置 HTTPS');
 			}
+		} else {
+			addCandidate(signedProxyUrl);
 		}
-		if (signedProxyUrl) return signedProxyUrl;
-		throw new Error('AList 未返回可供 HTTPS 页面播放的音频地址');
+		if (!candidates.length) {
+			throw new Error(options.pageProtocol === 'https:'
+				? 'AList 未返回可供 HTTPS 页面播放的音频地址'
+				: 'AList 未返回可用的音频地址');
+		}
+		return candidates;
+	}
+
+	function resolveAListMediaUrl(info, options = {}) {
+		return resolveAListMediaUrls(info, options)[0];
 	}
 
 	async function mapWithConcurrency(items, limit, mapper) {
@@ -278,6 +290,7 @@
 		requestAListConfig,
 		reopenAListConfig,
 		resolveAListMediaUrl,
+		resolveAListMediaUrls,
 		sanitizeDownloadUrl,
 		scanAListTree,
 		showBootError,

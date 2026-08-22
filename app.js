@@ -314,14 +314,14 @@ window.__maybeStartAListMusic = function() {
 						this.pendingRestore = null;
 						this.playSong(keyIndex, isSearch, time || 0, false, true);
 					},
-					reloadCurrentSong(isForce = true, forcePlay = false) {
+					reloadCurrentSong(isForce = true, forcePlay = false, preserveRetry = false) {
 						const source = this.getPlaybackSource();
 						if (source.cur < 0 || source.cur >= source.len) {
 							return this.showNotification('请先选择要播放的歌曲', 'warning');
 						}
 						const resumeTime = this.$refs.audioPlayer ? this.$refs.audioPlayer.currentTime : 0;
 						const shouldPlay = forcePlay || this.isPlaying;
-						this.playSong(source.cur, source.isSearch, resumeTime, isForce, shouldPlay, !shouldPlay, forcePlay);
+						this.playSong(source.cur, source.isSearch, resumeTime, isForce, shouldPlay, !shouldPlay, forcePlay, preserveRetry);
 					},
 					getCurrentQueueSong() {
 						if (this.currIndSh >= 0 && this.currIndSh < this.searchResults.length) {
@@ -350,18 +350,36 @@ window.__maybeStartAListMusic = function() {
 			},
 					handleAudioPlay() {
 						this.isPlaying = true;
-						if (this.currentSong && this.currentSong.key && this._audioErrorRetry) {
-							this._audioErrorRetry[this.currentSong.key] = 0;
-						}
 					},
 					handleAudioError(e) {
 						const activeMedia = this._activeMedia;
 						const eventSrc = e && e.currentTarget && (e.currentTarget.currentSrc || e.currentTarget.src);
 						if (!activeMedia || activeMedia.playToken !== this._playSongToken || activeMedia.key !== this.currentSong.key) return;
 						if (eventSrc && eventSrc !== activeMedia.src) return;
+						if (activeMedia.errorHandled) return;
+						activeMedia.errorHandled = true;
 						const error = this.$refs.audioPlayer.error;
 						const errorCode = error && error.code;
 						if (errorCode === MediaError.MEDIA_ERR_ABORTED) return;
+						const fallbackUrl = activeMedia.fallbackUrls && activeMedia.fallbackUrls.shift();
+						if (fallbackUrl) {
+							const audio = this.$refs.audioPlayer;
+							const resumeTime = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+							activeMedia.errorHandled = false;
+							audio.pause();
+							audio.removeAttribute('src');
+							audio.load();
+							audio.src = fallbackUrl;
+							activeMedia.src = audio.src;
+							audio.load();
+							if (resumeTime > 0) this._pendingResume = { playToken: activeMedia.playToken, key: activeMedia.key, time: resumeTime };
+							this.showNotification('当前音频地址不可用，正在尝试备用地址...', 'warning', 4);
+							audio.play().catch(playError => {
+								if (playError && (playError.name === 'AbortError' || playError.name === 'NotSupportedError' && audio.error)) return;
+								if (!audio.error) this.stopPlaybackWithError(playError);
+							});
+							return;
+						}
 						let msg = '播放出错';
 						if (errorCode === MediaError.MEDIA_ERR_NETWORK) msg = '音频网络请求失败，正在重新获取地址...';
 						else if (errorCode === MediaError.MEDIA_ERR_DECODE) msg = '音频解码失败，正在重新获取地址...';
@@ -375,7 +393,7 @@ window.__maybeStartAListMusic = function() {
 							this._audioErrorRetry[retryKey] = (this._audioErrorRetry[retryKey] || 0) + 1;
 							if (this._audioErrorRetry[retryKey] <= 2) {
 								this.showNotification(`${msg}（第${this._audioErrorRetry[retryKey]}次）`, 'warning', 4);
-								this.reloadCurrentSong(true, true);
+								this.reloadCurrentSong(true, true, true);
 								return;
 							}
 						}
@@ -406,7 +424,7 @@ window.__maybeStartAListMusic = function() {
 										if (src && this._lastStalledSrc !== src) {
 											this._lastStalledSrc = src;
 											this.showNotification('音频缓冲超时，尝试重新加载', 'warning');
-											this.reloadCurrentSong(true, true);
+											this.reloadCurrentSong(true, true, true);
 										}
 									});
 								}
@@ -594,13 +612,15 @@ window.__maybeStartAListMusic = function() {
 					getCurrentPlayList() {
 						return this.searchResults;
 					},
-					async playSong(ind, isSearch, time = 0, isForce, autoResume = false, suppressAutoPlay = false, forcePlay = false) {
+					async playSong(ind, isSearch, time = 0, isForce, autoResume = false, suppressAutoPlay = false, forcePlay = false, preserveRetry = false) {
 						const list = this.getCurrentPlayList();
 						if (ind < 0 || ind >= list.length) return;
 						const playToken = (this._playSongToken = (this._playSongToken || 0) + 1);
 						const song = list[ind];
 						let key = `${song.source}_${song.id}`
 						if (this.currentSong.key === key && !isForce) return;
+						this._audioErrorRetry ||= {};
+						if (!preserveRetry) this._audioErrorRetry[key] = 0;
 						// 注意：此处不重置 endingSong —— 自动切歌时它保持 true，防止 URL 获取期间
 						// timeupdate 再次触发 nextSong 导致连跳；新歌 src 就绪后再重置（见下方）
 						this._pendingResume = null;
@@ -625,7 +645,9 @@ window.__maybeStartAListMusic = function() {
 						const lyricPromise = this.loadLyrics(song);
 						try {
 							this.showNotification('正在加载音乐...', 'info');
-							const songUrl = await getSongUrl(song);
+							const mediaSource = await getSongUrl(song);
+							const songUrl = typeof mediaSource === 'string' ? mediaSource : mediaSource && mediaSource.url;
+							const fallbackUrls = mediaSource && Array.isArray(mediaSource.fallbackUrls) ? mediaSource.fallbackUrls : [];
 							if (this._playSongToken !== playToken || this.currentSong.key !== key) return;
 							if (!songUrl) {
 								this._lyricLoadToken = (this._lyricLoadToken || 0) + 1;
@@ -639,7 +661,9 @@ window.__maybeStartAListMusic = function() {
 							this._activeMedia = {
 								playToken,
 								key,
-								src: audio.src
+								src: audio.src,
+								fallbackUrls,
+								errorHandled: false
 							};
 							this.endingSong = false;
 							this.historyTime = time
@@ -661,6 +685,7 @@ window.__maybeStartAListMusic = function() {
 								this.showNotification(`开始播放 ${artistText} · ${displayInfo.title}`, 'success');
 							}).catch((error) => {
 								if (this._playSongToken !== playToken || this.currentSong.key !== key) return;
+								if (error && (error.name === 'AbortError' || error.name === 'NotSupportedError' && this.$refs.audioPlayer.error)) return;
 								if (error && error.name === 'NotAllowedError') {
 									this.showNotification('浏览器阻止了自动播放，请再次点击播放按钮', 'warning', 5);
 									return;
@@ -677,6 +702,9 @@ window.__maybeStartAListMusic = function() {
 						this.isPlaying = false;
 						this.endingSong = false;
 						this._pendingResume = null;
+						if (this._audioErrorRetry && this.currentSong && this.currentSong.key) {
+							this._audioErrorRetry[this.currentSong.key] = 0;
+						}
 						this._activeMedia = null;
 						if (this.$refs.audioPlayer) {
 							this.$refs.audioPlayer.pause();
@@ -713,6 +741,7 @@ window.__maybeStartAListMusic = function() {
 								this.historyTime = null;
 							}
 							this.$refs.audioPlayer.play().catch((error) => {
+								if (error && (error.name === 'AbortError' || error.name === 'NotSupportedError' && this.$refs.audioPlayer.error)) return;
 								if (error && error.name === 'NotAllowedError') {
 									this.showNotification('浏览器阻止了播放，请再次点击播放按钮', 'warning', 5);
 									return;
@@ -780,6 +809,9 @@ window.__maybeStartAListMusic = function() {
 							const audio = this.$refs.audioPlayer;
 							this.progress = (this.$refs.audioPlayer.currentTime / this.$refs.audioPlayer.duration) * 100;
 							this.currentTime = this.$refs.audioPlayer.currentTime;
+							if (this.currentSong.key && this.currentTime >= 1 && this._audioErrorRetry) {
+								this._audioErrorRetry[this.currentSong.key] = 0;
+							}
 							this.updateLyricHighlight();
 							if (!this.endingSong && !audio.paused && audio.duration - audio.currentTime <= 0.35) {
 								this.endingSong = true;
@@ -972,7 +1004,8 @@ window.__maybeStartAListMusic = function() {
 						try {
 							this.showNotification('正在准备音乐文件...', 'info');
 
-							const songUrl = AppCore.sanitizeDownloadUrl(await getSongUrl(song));
+							const mediaSource = await getSongUrl(song);
+							const songUrl = AppCore.sanitizeDownloadUrl(typeof mediaSource === 'string' ? mediaSource : mediaSource && mediaSource.url);
 							if (!songUrl) {
 								return this.showNotification('未获取到下载地址，请检查网络或 AList 配置', 'error');
 							}
@@ -1238,7 +1271,7 @@ if (window.__aListMusicDepsReady && window.__aListMusicScopeReady) window.__mayb
 
 if (/^(https?:)$/.test(location.protocol) && 'serviceWorker' in navigator) {
 	window.addEventListener('load', () => {
-		navigator.serviceWorker.register('./sw.js?t=7')
+		navigator.serviceWorker.register('./sw.js?t=8')
 			.then(function(registration) {
 				registration.update().catch(() => {});
 			})
