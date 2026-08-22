@@ -45,6 +45,7 @@ window.__maybeStartAListMusic = function() {
 						fullVolumeVisible: false,
 						lyricLoading: false,
 						lyricLoadingMsg: '',
+						lyricError: '',
 						_coverColorCache: {},
 						fullCoverColors: null,
 						randomIndexes: [],
@@ -582,7 +583,7 @@ window.__maybeStartAListMusic = function() {
 					},
 					async searchOnlineLyric(song) {
 						const cleanName = (song.name || '').replace(/\.[^./\\]+$/, '');
-						const results = await getNetEaseSearch(cleanName, 1).catch(() => null);
+						const results = await getNetEaseSearch(cleanName, 1);
 						if (!results || !results.length) return null;
 						const match = results[0];
 						return getNetEaseLyric(match.lyric_id || match.id);
@@ -869,14 +870,16 @@ window.__maybeStartAListMusic = function() {
 							this.lyrics = [];
 							this.currentLyricIndex = -1;
 							this.lyricsEnd = null;
+							this.lyricError = '';
 							this.lyricLoading = true;
 							this.lyricLoadingMsg = '正在搜索歌词...';
 						} else if (this._lyricSongKey !== key) {
 							// 切歌：清空旧歌词
-							this._lyricSongKey = key;
-							this.lyrics = [];
-							this.currentLyricIndex = -1;
-							this.lyricsEnd = null;
+															this._lyricSongKey = key;
+								this.lyrics = [];
+								this.currentLyricIndex = -1;
+								this.lyricsEnd = null;
+								this.lyricError = '';
 						}
 						// 非强制且有缓存：直接用缓存
 						if (cachedLyric && !isForce) {
@@ -886,54 +889,75 @@ window.__maybeStartAListMusic = function() {
 
 						try {
 							let lyric = null;
-				if (isForce) {
-							// 强制刷新：在线搜索网易云歌词
-							lyric = await this.searchOnlineLyric(song);
-							if (this._lyricLoadToken !== token || (this.currentSong.key && this.currentSong.key !== key)) return;
-							if (lyric) {
+							let localError = null;
+							let onlineError = null;
+							if (isForce) {
+								// 强制刷新：在线搜索网易云歌词
+								try {
+									lyric = await this.searchOnlineLyric(song);
+								} catch (error) {
+									onlineError = error;
+								}
+								if (this._lyricLoadToken !== token || (this.currentSong.key && this.currentSong.key !== key)) return;
 								this.lyricLoading = false;
-								this.lyricHistory[key] = lyric;
-								setStorage(cacheKey.lyricHistory, this.lyricHistory);
-								this.parseLyrics(lyric);
-							} else {
-								this.lyricLoading = false;
-								this.lyrics = [];
-								this.showNotification('未获取到此歌曲歌词，请尝试其他歌曲', 'warning');
+								if (lyric) {
+									this.lyricHistory[key] = lyric;
+									setStorage(cacheKey.lyricHistory, this.lyricHistory);
+									this.parseLyrics(lyric);
+								} else if (cachedLyric) {
+									this.parseLyrics(cachedLyric);
+								} else {
+									this.lyrics = [];
+									this.lyricError = onlineError ? this.formatLyricError(onlineError) : '';
+									if (!onlineError) this.showNotification('未获取到此歌曲歌词，请尝试其他歌曲', 'warning');
+								}
+								return;
 							}
-							return;
-						}
-						// 自动模式：本地LRC优先，无则在线搜索网易云
-						this.lyricLoading = true;
-						this.lyricLoadingMsg = '正在获取歌词...';
-						lyric = await getSongLyric(song);
-						if (this._lyricLoadToken !== token || (this.currentSong.key && this.currentSong.key !== key)) return;
-						// AList 无本地 LRC：自动搜索网易云在线歌词
-						if (!lyric) {
-							this.lyricLoadingMsg = '正在在线搜索歌词...';
-							lyric = await this.searchOnlineLyric(song);
-						}
-						if (this._lyricLoadToken !== token || (this.currentSong.key && this.currentSong.key !== key)) return;
+							// 自动模式：本地 LRC 优先，无则在线搜索网易云
+							this.lyricLoading = true;
+							this.lyricLoadingMsg = '正在获取歌词...';
+							try {
+								lyric = await getSongLyric(song);
+							} catch (error) {
+								localError = error;
+							}
+							if (this._lyricLoadToken !== token || (this.currentSong.key && this.currentSong.key !== key)) return;
+							// AList 无本地 LRC，或本地请求失败：继续在线搜索
+							if (!lyric) {
+								this.lyricLoadingMsg = '正在在线搜索歌词...';
+								try {
+									lyric = await this.searchOnlineLyric(song);
+								} catch (error) {
+									onlineError = error;
+								}
+							}
+							if (this._lyricLoadToken !== token || (this.currentSong.key && this.currentSong.key !== key)) return;
+							this.lyricLoading = false;
 							if (lyric) {
-								this.lyricLoading = false;
 								this.lyricHistory[key] = lyric;
 								setStorage(cacheKey.lyricHistory, this.lyricHistory);
 								this.parseLyrics(lyric);
 							} else if (cachedLyric) {
-								this.lyricLoading = false;
 								this.parseLyrics(cachedLyric);
 							} else {
-								this.lyricLoading = false;
+								this.lyrics = [];
+								this.lyricError = onlineError ? this.formatLyricError(onlineError) : localError ? this.formatLyricError(localError) : '';
 							}
 						} catch (e) {
 							console.error('获取歌词失败:', e);
 							if (this._lyricLoadToken !== token || (this.currentSong.key && this.currentSong.key !== key)) return;
 							this.lyricLoading = false;
-							if (cachedLyric) {
-								this.parseLyrics(cachedLyric);
-							}
+							this.lyricError = this.formatLyricError(e);
+							if (cachedLyric) this.parseLyrics(cachedLyric);
 						}
 					},
+					formatLyricError(error) {
+						const message = error && error.message ? error.message : String(error || '未知错误');
+						if (/Failed to fetch|NetworkError|跨域|CORS/i.test(message)) return '歌词请求被浏览器拦截，请检查 AList HTTPS/CORS 或在线歌词接口';
+						return message;
+					},
 					parseLyrics(lrcText) {
+						this.lyricError = '';
 						this.lyrics = AppCore.parseLrc(lrcText);
 						this.lyricsEnd = this.lyrics.length ? this.lyrics[this.lyrics.length - 1].time : null;
 						this.updateLyricHighlight();
@@ -1286,7 +1310,7 @@ if (window.__aListMusicDepsReady && window.__aListMusicScopeReady) window.__mayb
 
 if (/^(https?:)$/.test(location.protocol) && 'serviceWorker' in navigator) {
 	window.addEventListener('load', () => {
-		navigator.serviceWorker.register('./sw.js?t=11')
+		navigator.serviceWorker.register('./sw.js?t=12')
 			.then(function(registration) {
 				registration.update().catch(() => {});
 			})

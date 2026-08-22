@@ -910,6 +910,53 @@ body {
 	font-size: 16px;
 }
 
+.lyric-error {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 10px;
+	width: min(100%, 680px);
+	box-sizing: border-box;
+	padding: 14px 18px;
+	color: rgba(255, 255, 255, 0.78);
+	font-size: 14px;
+	line-height: 1.6;
+	text-align: center;
+	border: 1px solid rgba(255, 152, 0, 0.28);
+	border-radius: 10px;
+	background: rgba(255, 152, 0, 0.08);
+}
+
+.lyric-error > i {
+	flex: 0 0 auto;
+	color: #ffb347;
+}
+
+.lyric-error span {
+	min-width: 0;
+}
+
+.lyric-retry-btn {
+	width: 32px;
+	height: 32px;
+	flex: 0 0 32px;
+	border: 1px solid rgba(255, 255, 255, 0.16);
+	border-radius: 8px;
+	color: #fff;
+	background: rgba(255, 255, 255, 0.08);
+	cursor: pointer;
+}
+
+.lyric-retry-btn:hover,
+.lyric-retry-btn:focus-visible {
+	background: rgba(255, 255, 255, 0.16);
+}
+
+.lyrics-section.full .lyric-error {
+	margin: 14vh auto 0;
+	font-size: 0.95em;
+}
+
 .lyric-line:hover {
 	background: rgba(255, 255, 255, 0.08);
 	color: rgba(255, 255, 255, 0.9);

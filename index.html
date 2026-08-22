@@ -15,16 +15,16 @@
 		<style>[v-cloak]{display:none !important;}</style>
 		<link rel="apple-touch-icon" href="favicon.ico" />
 		<link rel="stylesheet" href="vendor/fontawesome.min.css">
-		<link rel="stylesheet" href="style.css?t=11">
+		<link rel="stylesheet" href="style.css?t=12">
 		<script defer src="vendor/vue.global.prod.js"></script>
 		<script defer src="vendor/pako.min.js"></script>
 		<script defer src="vendor/localforage.min.js"></script>
 		<script defer src="vendor/axios.min.js"></script>
 		<script defer src="vendor/md5.min.js"></script>
-		<script defer src="app-core.js?t=11"></script>
-		<script defer src="utils.js?t=11"></script>
-		<script defer src="alist.js?t=11"></script>
-		<script defer src="app.js?t=11"></script>
+		<script defer src="app-core.js?t=12"></script>
+		<script defer src="utils.js?t=12"></script>
+		<script defer src="alist.js?t=12"></script>
+		<script defer src="app.js?t=12"></script>
 
 	</head>
 	<body>
@@ -212,7 +212,7 @@
 													<!-- 全屏时的顶部工具栏 -->
 							<div class="section-title full-toolbar" v-if="lyricFull">
 								<div class="toolbar-right">
-									<button type="button" class="full-tool-btn" v-if="!currentSong.lyric"
+									<button type="button" class="full-tool-btn" v-if="!currentSong.lyric || lyricError"
 										@click="reloadCurrentLyrics()" title="刷新歌词" aria-label="刷新歌词">
 										<i class="fas fa-rotate" aria-hidden="true"></i>
 									</button>
@@ -261,7 +261,14 @@
 							<div class="full-lyrics-main">
 								<!-- 歌词容器 -->
 								<div class="lyrics-container" ref="lyricsContainer">
-									<div class="lyric-empty" v-if="!lyrics.length && !lyricLoading">暂无歌词<div class="lyric-empty-tip">点击上方刷新按钮重新获取</div></div>
+									<div class="lyric-error" v-if="!lyrics.length && !lyricLoading && lyricError">
+										<i class="fas fa-triangle-exclamation" aria-hidden="true"></i>
+										<span>{{ lyricError }}</span>
+										<button type="button" class="lyric-retry-btn" @click="reloadCurrentLyrics" title="重试歌词请求" aria-label="重试歌词请求">
+											<i class="fas fa-rotate" aria-hidden="true"></i>
+										</button>
+									</div>
+									<div class="lyric-empty" v-else-if="!lyrics.length && !lyricLoading">暂无歌词<div class="lyric-empty-tip">点击上方刷新按钮重新获取</div></div>
 									<div class="lyric-loading" v-if="lyricLoading">
 										<i class="fas fa-spinner fa-pulse"></i>
 										<span>{{ lyricLoadingMsg || '正在获取歌词...' }}</span>
