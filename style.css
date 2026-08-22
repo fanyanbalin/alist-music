@@ -12,6 +12,238 @@ html {
 	display: none;
 }
 
+.boot-status[hidden] {
+	display: none;
+}
+
+.boot-status {
+	position: fixed;
+	inset: 0;
+	z-index: 10000;
+	display: grid;
+	place-items: center;
+	padding: 24px;
+	background: #081018;
+}
+
+.boot-status-card {
+	width: min(560px, 100%);
+	display: grid;
+	grid-template-columns: auto 1fr auto;
+	align-items: center;
+	gap: 18px;
+	padding: 24px;
+	border: 1px solid rgba(255, 107, 107, 0.45);
+	border-radius: 18px;
+	background: #141c25;
+	box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+}
+
+.boot-status-card > i {
+	font-size: 28px;
+	color: #ff6b6b;
+}
+
+.boot-status-card p {
+	margin-top: 6px;
+	color: rgba(255, 255, 255, 0.72);
+}
+
+.boot-status-card button,
+.config-dialog button[type="submit"] {
+	border: 0;
+	border-radius: 10px;
+	padding: 10px 16px;
+	color: #fff;
+	background: #ff5f66;
+	cursor: pointer;
+}
+
+.config-dialog {
+	width: min(720px, calc(100vw - 40px));
+	max-height: min(760px, calc(100dvh - 40px));
+	margin: auto;
+	border: 1px solid rgba(255, 255, 255, 0.13);
+	border-radius: 24px;
+	padding: 0;
+	overflow: hidden;
+	color: #fff;
+	background:
+		radial-gradient(circle at 0 0, rgba(255, 95, 102, 0.14), transparent 38%),
+		linear-gradient(150deg, #17222d 0%, #101820 72%);
+	box-shadow: 0 30px 100px rgba(0, 0, 0, 0.68), 0 0 0 1px rgba(255, 255, 255, 0.025) inset;
+}
+
+.config-dialog::backdrop {
+	background:
+		radial-gradient(circle at 50% 35%, rgba(25, 55, 75, 0.28), transparent 42%),
+		rgba(1, 7, 11, 0.88);
+	backdrop-filter: blur(10px);
+}
+
+.config-dialog form {
+	display: grid;
+	gap: 22px;
+	padding: clamp(26px, 4vw, 42px);
+	overflow-y: auto;
+	max-height: min(760px, calc(100dvh - 40px));
+}
+
+.config-dialog-header {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+}
+
+.config-dialog-header h2 {
+	font-size: clamp(25px, 3vw, 32px);
+	line-height: 1.1;
+	letter-spacing: -0.02em;
+}
+
+.config-dialog-header p {
+	margin-top: 7px;
+	color: rgba(255, 255, 255, 0.58);
+	font-size: 14px;
+}
+
+.config-dialog-mark {
+	width: 52px;
+	height: 52px;
+	flex: 0 0 auto;
+	display: grid;
+	place-items: center;
+	border-radius: 15px;
+	color: #fff;
+	font-size: 20px;
+	background: linear-gradient(145deg, #ff6b72, #e94b58);
+	box-shadow: 0 12px 28px rgba(255, 83, 94, 0.28);
+}
+
+.config-security-tip {
+	display: flex;
+	align-items: flex-start;
+	gap: 11px;
+	padding: 12px 14px;
+	border: 1px solid rgba(87, 205, 173, 0.2);
+	border-radius: 12px;
+	color: rgba(218, 255, 246, 0.72);
+	background: rgba(55, 171, 142, 0.08);
+	font-size: 13px;
+	line-height: 1.5;
+}
+
+.config-security-tip i {
+	margin-top: 3px;
+	color: #58d1ae;
+}
+
+.config-fields {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 18px;
+}
+
+.config-field {
+	display: grid;
+	gap: 8px;
+	min-width: 0;
+	font-size: 14px;
+	font-weight: 600;
+	color: rgba(255, 255, 255, 0.8);
+}
+
+.config-field-wide {
+	grid-column: 1 / -1;
+}
+
+.config-input-wrap {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-width: 0;
+	border: 1px solid rgba(255, 255, 255, 0.13);
+	border-radius: 12px;
+	padding: 0 14px;
+	background: rgba(255, 255, 255, 0.055);
+	transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.config-input-wrap:focus-within {
+	border-color: rgba(255, 107, 107, 0.85);
+	background: rgba(255, 255, 255, 0.075);
+	box-shadow: 0 0 0 4px rgba(255, 107, 107, 0.12);
+}
+
+.config-input-wrap > i {
+	width: 16px;
+	flex: 0 0 auto;
+	color: rgba(255, 255, 255, 0.36);
+	text-align: center;
+}
+
+.config-dialog input {
+	width: 100%;
+	min-width: 0;
+	border: 0;
+	padding: 13px 0;
+	color: #fff;
+	background: transparent;
+	outline: none;
+	font: inherit;
+}
+
+.config-dialog input::placeholder {
+	color: rgba(255, 255, 255, 0.28);
+}
+
+.config-error {
+	min-height: 20px;
+	margin-top: -8px;
+	color: #ff979c;
+	font-size: 13px;
+}
+
+.config-submit {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 11px;
+	width: 100%;
+	min-height: 50px;
+	margin-top: -4px;
+	border-radius: 12px !important;
+	font-size: 15px;
+	font-weight: 700;
+	letter-spacing: 0.01em;
+	background: linear-gradient(100deg, #ff6068, #f34e5b) !important;
+	box-shadow: 0 12px 28px rgba(244, 74, 86, 0.23);
+	transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
+}
+
+.config-submit:hover {
+	transform: translateY(-1px);
+	filter: brightness(1.06);
+	box-shadow: 0 16px 34px rgba(244, 74, 86, 0.3);
+}
+
+.config-submit:active {
+	transform: translateY(0);
+}
+
+.icon-btn {
+	border: 0;
+	padding: 4px;
+	color: inherit;
+	background: transparent;
+	cursor: pointer;
+}
+
+.section-icon {
+	font-size: inherit;
+}
+
+
 .cursor {
 	cursor: pointer;
 }
@@ -461,6 +693,19 @@ html.edge-perf .song-item:hover {
 	margin-bottom: 20px;
 }
 
+.progress-slider {
+	width: 100%;
+	height: 24px;
+	accent-color: #ff6b6b;
+	cursor: pointer;
+}
+
+.progress-slider:focus-visible,
+.icon-btn:focus-visible {
+	outline: 2px solid #ff6b6b;
+	outline-offset: 3px;
+}
+
 .progress-bar {
 	width: 100%;
 	height: 6px;
@@ -703,7 +948,7 @@ html.edge-perf .song-item:hover {
 .lyric-line,
 .lyric-empty {
 	padding: 8px 12px;
-	transition: 
+	transition:
 		opacity 0.3s ease,
 		transform 0.35s cubic-bezier(0.25, 0.8, 0.25, 1),
 		background 0.4s ease,
@@ -750,10 +995,10 @@ html.edge-perf .song-item:hover {
 }
 
 @keyframes lyric-pulse {
-	0%, 100% { 
+	0%, 100% {
 		text-shadow: 0 0 12px rgba(255, 107, 107, 0.5);
 	}
-	50% { 
+	50% {
 		text-shadow: 0 0 18px rgba(255, 107, 107, 0.7);
 	}
 }
@@ -1296,7 +1541,7 @@ html.edge-perf .song-item:hover {
 	opacity: 0.6;
 	margin-bottom: 4px;
 	text-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
-	transition: 
+	transition:
 		opacity 0.3s cubic-bezier(0.25, 0.1, 0.25, 1),
 		transform 0.36s cubic-bezier(0.34, 1.15, 0.64, 1),
 		background 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
@@ -1351,7 +1596,7 @@ html.edge-perf .song-item:hover {
 	padding-right: clamp(24px, 3.2vw, 42px);
 	background: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.06));
 	border: 1px solid rgba(255, 255, 255, 0.2);
-	box-shadow: 
+	box-shadow:
 		0 20px 50px rgba(0, 0, 0, 0.3),
 		0 0 60px rgba(255, 107, 107, 0.1);
 	text-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
@@ -1362,14 +1607,14 @@ html.edge-perf .song-item:hover {
 }
 
 @keyframes lyric-glow {
-	0%, 100% { 
-		box-shadow: 
+	0%, 100% {
+		box-shadow:
 			0 20px 50px rgba(0, 0, 0, 0.3),
 			0 0 60px rgba(255, 107, 107, 0.1);
 		text-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
 	}
-	50% { 
-		box-shadow: 
+	50% {
+		box-shadow:
 			0 24px 56px rgba(0, 0, 0, 0.35),
 			0 0 70px rgba(255, 107, 107, 0.15);
 		text-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
@@ -1612,12 +1857,63 @@ html.edge-perf .song-item:hover {
 	}
 
 	.search-results {
+		height: min(60vh, 600px);
+		min-height: 280px;
 		max-height: 60vh;
 	}
 
 	.lyrics-section {
 		min-height: 45vh;
 		max-height: 70vh;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*, *::before, *::after {
+		scroll-behavior: auto !important;
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+	}
+}
+
+@media (max-width: 620px) {
+	.config-dialog {
+		width: min(100% - 20px, 720px);
+		max-height: calc(100dvh - 20px);
+		border-radius: 20px;
+	}
+
+	.config-dialog form {
+		gap: 18px;
+		padding: 24px 20px;
+		max-height: calc(100dvh - 20px);
+	}
+
+	.config-fields {
+		grid-template-columns: 1fr;
+		gap: 15px;
+	}
+
+	.config-field-wide {
+		grid-column: auto;
+	}
+
+	.config-dialog-header {
+		align-items: flex-start;
+	}
+
+	.config-dialog-mark {
+		width: 46px;
+		height: 46px;
+		border-radius: 13px;
+	}
+}
+
+@media (max-width: 520px) {
+	.boot-status-card {
+		grid-template-columns: 1fr;
+		text-align: center;
 	}
 }
 
@@ -1707,6 +2003,8 @@ html.edge-perf .song-item:hover {
 	}
 
 	.search-results {
+		height: min(60vh, 600px);
+		min-height: 260px;
 		max-height: 60vh;
 	}
 

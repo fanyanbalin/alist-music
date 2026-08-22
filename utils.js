@@ -22,18 +22,17 @@ async function getStorage(key) {
 }
 
 function setStorage(key, val) {
-	if (!val && val !== 0) return localforage.removeItem(key)
-	let text = JSON.stringify(val)
-	const data = pako.deflate(new TextEncoder().encode(text), {
-		level: 9
-	});
-	localforage.setItem(key, data).then(() => {
+	if (!val && val !== 0) return localforage.removeItem(key);
+	const text = JSON.stringify(val);
+	const data = pako.deflate(new TextEncoder().encode(text), { level: 9 });
+	return localforage.setItem(key, data).then(() => {
 		const size = data.length / 1024;
-		const size1 = new TextEncoder().encode(text).length / 1024; // 转换为KB
-		console.debug(
-			`${key} 存储成功: ${data.length} 长度, ${size1.toFixed(2)}kb -> ${size.toFixed(2)}kb,  压缩率: ${(100 * size / size1).toFixed(2)}%`
-		);
-	}).catch(console.error);
+		const originalSize = new TextEncoder().encode(text).length / 1024;
+		console.debug(`${key} 存储成功: ${originalSize.toFixed(2)}kb -> ${size.toFixed(2)}kb`);
+	}).catch(error => {
+		console.error(`${key} 存储失败`, error);
+		throw error;
+	});
 }
 
 function setStorageExp(key, val, ttl) {
@@ -65,9 +64,9 @@ function downloadText(text, name) {
 		href: url,
 		download: name
 	});
-document.body.appendChild(link).click();
-link.remove();
-setTimeout(() => URL.revokeObjectURL(url), 1000);
+	document.body.appendChild(link).click();
+	link.remove();
+	setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function showNotification(message, type = 'info', duration = 2) {
@@ -92,6 +91,8 @@ function showNotification(message, type = 'info', duration = 2) {
 	const icon = type === 'success' ? '\u2714 ' : type === 'error' ? '\u2716 ' : type === 'warning' ? '\u26A0 ' : '\u2139 ';
 	const notification = Object.assign(document.createElement('div'), {
 		className: 'gd-notification',
+		role: type === 'error' ? 'alert' : 'status',
+		ariaLive: type === 'error' ? 'assertive' : 'polite',
 		textContent: icon + message,
 		style: `background:${bgcolor};color:#fff;padding:12px 18px;border-radius:10px;font-size:14px;` +
 			`backdrop-filter:blur(10px);box-shadow:0 6px 20px rgba(0,0,0,0.35);` +
@@ -112,17 +113,14 @@ function showNotification(message, type = 'info', duration = 2) {
 }
 
 function genRandomIndexes(len) {
-	const arr = []
-	while (arr.length < len) {
-		const randomIndex = Math.floor(Math.random() * len)
-		// 确保没有重复的值且不等于当前索引
-		if (!arr.includes(randomIndex)) arr.push(randomIndex)
-	}
-	return arr
+	return AppCore.shuffleIndexes(len);
 }
 
 function toggleLoading(isShow) {
-	loadingRef.classList.toggle('hide', !isShow)
+	loadingRef.classList.toggle('hide', !isShow);
+	loadingRef.setAttribute('aria-hidden', String(!isShow));
+	const app = document.getElementById('app');
+	if (app) app.setAttribute('aria-busy', String(Boolean(isShow)));
 }
 
 /****************************************** 音乐相关接口 *******************************************/
@@ -145,66 +143,50 @@ window.songAssetCache = window.songAssetCache || {
 	coverStoreLoaded: false
 }
 window.requestNcmApi = async function(path, params = {}, options = {}) {
-	const {
-		timeout = 10000,
-		isValid
-	} = options;
+	const { timeout = 10000, isValid } = options;
 	const searchParams = new URLSearchParams(params);
-	const url = `${NCM_API_BASE}${path}${searchParams.toString() ? '?' + searchParams.toString() : ''}`;
+	const url = `${NCM_API_BASE}${path}${searchParams.toString() ? `?${searchParams}` : ''}`;
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeout);
 	try {
-		const fetchPromise = fetch(url).then(async res => {
-			const text = await res.text();
-			if (!res.ok) {
-				try {
-					const data = JSON.parse(text);
-					if (isValid && isValid(data)) return data;
-				} catch (_) {}
-				throw new Error(`HTTP status: ${res.status}`);
+		const res = await fetch(url, { signal: controller.signal });
+		const text = await res.text();
+		if (!res.ok) {
+			try {
+				const data = JSON.parse(text);
+				if (isValid && isValid(data)) return data;
+			} catch (parseError) {
+				console.debug('错误响应不是 JSON', parseError);
 			}
-			return JSON.parse(text);
-		});
-		let timer;
-		const timeoutPromise = new Promise((_, reject) => {
-			timer = setTimeout(() => reject(new Error('timeout')), timeout);
-		});
-		try {
-			return await Promise.race([fetchPromise, timeoutPromise]);
-		} finally {
-			clearTimeout(timer);
+			throw new Error(`HTTP status: ${res.status}`);
 		}
-	} catch (e) {
-		console.debug(`requestNcmApi ${path} failed:`, params, e);
-		// 返回错误标记对象，让调用方区分"网络错误"与"业务空结果"
+		return JSON.parse(text);
+	} catch (error) {
+		console.debug(`requestNcmApi ${path} failed:`, params, error);
 		return {
 			__error: true,
-			message: e && e.message ? e.message : String(e)
+			message: error && error.name === 'AbortError' ? '请求超时' : (error && error.message ? error.message : String(error))
 		};
+	} finally {
+		clearTimeout(timer);
 	}
 }
 // 获取网易云歌词（Meting API: ?type=lrc&id=歌曲ID），接口直接返回 LRC 文本
 window.getNetEaseLyric = async function(id, timeout = 10000) {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeout);
 	try {
 		const url = `${METING_API_BASE}?server=netease&type=lrc&id=${encodeURIComponent(id)}`;
-		const fetchPromise = fetch(url).then(res => {
-			if (!res.ok) throw new Error(`HTTP ${res.status}`);
-			return res.text();
-		});
-		let timer;
-		const timeoutPromise = new Promise((_, reject) => {
-			timer = setTimeout(() => reject(new Error('timeout')), timeout);
-		});
-		let text;
-		try {
-			text = await Promise.race([fetchPromise, timeoutPromise]);
-		} finally {
-			clearTimeout(timer);
-		}
-		// 无歌词或接口异常时返回占位文本（如 [00:00.00]暂无歌词），此处统一视为无歌词
+		const res = await fetch(url, { signal: controller.signal });
+		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		const text = await res.text();
 		if (!text || /暂无歌词|Searching|No lyrics|not found/i.test(text) || /^\s*</.test(text)) return null;
 		return text;
-	} catch (e) {
-		console.debug('获取歌词失败:', e);
+	} catch (error) {
+		if (error.name !== 'AbortError') console.debug('获取歌词失败:', error);
 		return null;
+	} finally {
+		clearTimeout(timer);
 	}
 };
 // 网易云歌曲格式 → 项目内部统一格式（兼容 /search 的 artists/album 与歌单的 ar/al）

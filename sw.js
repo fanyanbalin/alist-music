@@ -1,54 +1,57 @@
-const CACHE_VERSION = 'dmusic-static-v9';
+const CACHE_VERSION = 'alist-music-static-v2';
 const STATIC_ASSETS = [
 	'./',
 	'./index.html',
+	'./style.css?t=2',
+	'./app-core.js?t=2',
+	'./utils.js?t=2',
+	'./alist.js?t=2',
+	'./app.js?t=2',
 	'./manifest.json',
 	'./favicon.ico',
 	'./icon-192.png',
-	'./icon-512.png'
+	'./icon-512.png',
+	'./vendor/fontawesome.min.css',
+	'./vendor/vue.global.prod.js',
+	'./vendor/pako.min.js',
+	'./vendor/localforage.min.js',
+	'./vendor/axios.min.js',
+	'./vendor/md5.min.js',
+	'./webfonts/fa-solid-900.woff2',
+	'./webfonts/fa-regular-400.woff2',
+	'./webfonts/fa-brands-400.woff2'
 ];
 
-self.addEventListener('install', function(event) {
-	event.waitUntil(caches.open(CACHE_VERSION).then(function(cache) {
-		return cache.addAll(STATIC_ASSETS);
-	}));
+self.addEventListener('install', event => {
+	event.waitUntil(caches.open(CACHE_VERSION).then(cache => cache.addAll(STATIC_ASSETS)));
 	self.skipWaiting();
 });
 
-self.addEventListener('activate', function(event) {
+self.addEventListener('activate', event => {
 	event.waitUntil(Promise.all([
-		caches.keys().then(function(keys) {
-			return Promise.all(keys.filter(function(key) {
-				return key !== CACHE_VERSION;
-			}).map(function(key) {
-				return caches.delete(key);
-			}));
-		}),
+		caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE_VERSION).map(key => caches.delete(key)))),
 		self.clients.claim()
 	]));
 });
 
-self.addEventListener('fetch', function(event) {
+self.addEventListener('fetch', event => {
 	if (event.request.method !== 'GET') return;
-	const requestUrl = new URL(event.request.url);
-	if (requestUrl.origin !== self.location.origin) return;
-	// 签名下载(/p/)与 AList 接口(/api/)不缓存：签名会过期，音频/歌词文件可能撑爆缓存
-	if (requestUrl.pathname.startsWith('/p/') || requestUrl.pathname.startsWith('/api/')) return;
+	const url = new URL(event.request.url);
+	if (url.origin !== self.location.origin) return;
+	const scopePath = new URL(self.registration.scope).pathname.replace(/\/$/, '');
+	const relativePath = url.pathname.slice(scopePath.length) || '/';
+	if (relativePath.startsWith('/api/') || relativePath.startsWith('/p/') || url.searchParams.has('sign')) return;
 
-	event.respondWith(caches.match(event.request).then(function(cachedResponse) {
-		if (cachedResponse) return cachedResponse;
-		return fetch(event.request).then(function(networkResponse) {
-			if (!networkResponse || networkResponse.status !== 200) return networkResponse;
-			const responseToCache = networkResponse.clone();
-			caches.open(CACHE_VERSION).then(function(cache) {
-				cache.put(event.request, responseToCache);
-			});
-			return networkResponse;
-		}).catch(function() {
-			if (event.request.mode === 'navigate') {
-				return caches.match('./index.html');
-			}
-			return caches.match(event.request);
-		});
-	}));
+	if (event.request.mode === 'navigate') {
+		event.respondWith(fetch(event.request).catch(() => caches.match('./index.html')));
+		return;
+	}
+
+	const isStaticAsset = STATIC_ASSETS.some(asset => {
+		const assetUrl = new URL(asset, self.registration.scope);
+		return assetUrl.pathname === url.pathname && assetUrl.search === url.search;
+	});
+	if (!isStaticAsset) return;
+
+	event.respondWith(caches.match(event.request).then(cached => cached || fetch(event.request)));
 });

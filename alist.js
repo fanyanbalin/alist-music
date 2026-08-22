@@ -1,93 +1,31 @@
-// 简单并发池：限制同一时刻运行的任务数，避免并发请求过多压垮服务器
-function createListPool(limit) {
-	let active = 0
-	const queue = []
-	const pump = () => {
-		while (active < limit && queue.length) {
-			const { task, resolve } = queue.shift()
-			active++
-			task().then(resolve, resolve).finally(() => {
-				active--
-				pump()
-			})
-		}
-	}
-	return {
-		run(task) {
-			return new Promise(resolve => {
-				queue.push({ task, resolve })
-				pump()
-			})
-		}
-	}
-}
-
 window.AList = {
-	getToken: () => getStorageExp(getAListScopeKey('alist_token')),
-	getApiToken: () => request.post(`/api/auth/login`, {
+	getToken: () => window.alistToken || null,
+	getApiToken: () => request.post('/api/auth/login', {
 		username: alist[2],
 		password: alist[3]
-	}).then(({
-		data
-	}) => data.token).catch(() => null),
-	getFileInfo: (path) => request.post(`/api/fs/get`, {
-		path
+	}, { _skipAListRelogin: true }).then(({ data }) => data.token),
+	getFileInfo: path => request.post('/api/fs/get', { path }),
+	getRawFile: (path, params) => request.get(`/p${encodePathSegments(path)}`, { params }),
+	uploadRawFile: (data, path) => request.put('/api/fs/form', data, {
+		headers: { 'File-Path': encodeURIComponent(path) }
 	}),
-	// 对路径逐段编码，兼容目录/文件名含空格、&、#、? 的情况
-	getRawFile: (path, params) => request.get(`/p${encodePathSegments(path)}`, {
-		params
-	}),
-	uploadRawFile: (data, path) => request.put(`/api/fs/form`, data, {
-		headers: {
-			'File-Path': encodeURIComponent(path)
-		}
-	}), // 'Content-Type': 'multipart/form-data', 
-	listAllSong: async (path, isForce) => {
-		let result = []
-		try {
-			result = await AList.listSong(path, 1, isForce) // 从根目录开始
-		} catch (e) {}
-		return result
+	listDirectory: async (path, isForce) => {
+		const url = `/api/fs/list${isForce ? `?t=${Date.now()}` : ''}`;
+		const response = await request.post(url, { path });
+		return response && response.data && Array.isArray(response.data.content) ? response.data.content : [];
 	},
-	// 获取文件目录的递归函数（并发拉取子目录，显著加快大曲库首次加载）
-	listSong: async (path = '', depth = 1, isForce, pool) => {
-		if (depth > 5) return [] // 最大递归深度为 5
-		try {
-			const url = `/api/fs/list${isForce ? ('?t=' + new Date().getTime()) : ''}`
-			const res = await request({
-				url,
-				method: 'post',
-				data: {
-					path
-				}
-			})
-			const files = res.data.content || []
-			const result = []
-			const dirs = []
-			for (const file of files) {
-				const filePath = `${path}/${file.name}`
-				if (file.is_dir) {
-					dirs.push(filePath)
-				} else {
-					result.push({
-						name: file.name,
-						path: path,
-						is_dir: file.is_dir,
-						size: file.size
-					})
-				}
-			}
-			// 同一并发池限制同时请求数，避免压垮服务器
-			if (!pool) pool = createListPool(6)
-			const nested = await Promise.all(dirs.map(d =>
-				pool.run(() => AList.listSong(d, depth + 1, isForce, pool))
-			))
-			nested.forEach(arr => result.push(...arr))
-			return result
-		} catch (e) {}
-		return []
+	listAllSong: async (path, isForce) => {
+		const result = await AppCore.scanAListTree(path, directory => AList.listDirectory(directory, isForce), {
+			concurrency: 6,
+			maxDepth: 5
+		});
+		if (result.errors.length) {
+			console.warn(`曲库扫描完成，但有 ${result.errors.length} 个目录读取失败`, result.errors);
+			showNotification(`${result.errors.length} 个目录读取失败，已加载其余歌曲`, 'warning', 5);
+		}
+		return result.files;
 	}
-}
+};
 window.withVueApp = function(callback, retry = 0) {
 	if (window.vueApp) return callback(window.vueApp);
 	// 最多重试 30s（CDN 加载缓慢时也能等到 Vue 挂载）
@@ -96,8 +34,8 @@ window.withVueApp = function(callback, retry = 0) {
 };
 
 function getAListScopeKey(name) {
-	const scope = window.alist ? `${alist[0]}|${alist[1]}` : 'default';
-	return `${name}_${md5(scope).slice(0, 8)}`;
+	const scope = window.alist ? `${alist[0]}|${alist[1]}|${alist[2]}` : 'default';
+	return `${name}_${md5(scope)}`;
 }
 
 function isMusic(val) {
@@ -136,125 +74,132 @@ function handleSongs(songs) {
 
 // AList 专属模式（已移除云音乐/网易云播放模式）
 window.isAList = true;
-(async function() {
-	if (!isAList) return; // ?t=a  开启AList
-	toggleLoading(true);
-	try {
-	// 支持 URL 参数配置：?alist=域名|路径|用户名|密码（便于部署与调试，配置会持久化）
-	const urlAlist = new URLSearchParams(location.search).get('alist');
-	window.alist = await getStorage('alist_config')
-	if (!alist && urlAlist) {
-		alist = urlAlist.split('|')
-		if (alist.length == 4) setStorage('alist_config', alist)
+(async function initializeAList() {
+	if (!isAList) return;
+	const params = new URLSearchParams(location.search);
+	if (params.has('alist')) {
+		params.delete('alist');
+		const cleanQuery = params.toString();
+		history.replaceState(null, '', `${location.pathname}${cleanQuery ? `?${cleanQuery}` : ''}${location.hash}`);
+		showNotification('已忽略 URL 中的 AList 凭据，请通过安全表单重新输入', 'warning', 6);
 	}
-	if (!alist) {
-		alist = (prompt('请输入alist: alist域名|音乐绝对路径|username|password',
-			'https://alist.xyf111.top|/music|admin|admin') || '').split('|')
-		if (alist.length != 4) return;
-		setStorage('alist_config', alist)
-	}
-	window.AListUrl = alist[0]
-	const tokenCacheKey = getAListScopeKey('alist_token')
-	const musicListCacheKey = getAListScopeKey('alist_MusicList')
-	const singerCacheKey = getAListScopeKey('alist_options')
-	window.request = axios.create({
-		baseURL: AListUrl
-	})
-	// AList 接口统一剥壳 + 401/403 自动重登重试一次（HTTP 层与 body.code 层都覆盖）
-	request.interceptors.response.use(
-		async (response) => {
-			const data = response.data;
-			if (data && (data.code === 401 || data.code === 403) && !response.config._alistRetried) {
-				response.config._alistRetried = true;
-				const token = await relogin();
-				if (token) {
-					response.config.headers = response.config.headers || {};
-					response.config.headers['Authorization'] = token;
-					return request(response.config);
-				}
-			}
-			return data;
-		},
-		async (error) => {
-			const status = error && error.response && error.response.status;
-			if ((status === 401 || status === 403) && error.config && !error.config._alistRetried) {
-				error.config._alistRetried = true;
-				const token = await relogin();
-				if (token) {
-					error.config.headers = error.config.headers || {};
-					error.config.headers['Authorization'] = token;
-					return request(error.config);
-				}
-			}
-			return Promise.reject(error);
-		}
-	)
-	// 重新登录并更新 token（供拦截器与启动流程复用）
-	window.relogin = async function() {
-		const tokenKey = getAListScopeKey('alist_token');
-		setStorageExp(tokenKey, null);
-		const token = await AList.getApiToken();
-		if (!token) return null;
-		setStorageExp(tokenKey, token, 24 * 60 * 60);
-		request.defaults.headers['Authorization'] = token;
-		return token;
-	}
-	if (!AList.getToken()) {
-		let token = await AList.getApiToken()
-		if (!token) return showNotification('登录失败，无法获取AList Token，请检查地址与账号密码', 'error');
-		setStorageExp(tokenCacheKey, token, 24 * 60 * 60)
-	}
-	request.defaults.headers['Authorization'] = AList.getToken()
-	// 请求播放列表
-	window.musicList = await getStorage(musicListCacheKey)
-	if (!musicList) {
-		let songs = await AList.listAllSong(alist[1])
-		if (!songs || !songs.length) return showNotification('获取音乐列表失败，请检查音乐路径', 'error');
-		handleSongs(songs);
-		musicList = songs.filter(item => item.m)
-		setStorage(musicListCacheKey, musicList)
-	}
-	withVueApp(app => {
-		app.searchResults = musicList
-	})
-	// 获取搜索项
-	window.singers = await getStorage(singerCacheKey)
-	if (!singers) {
+	AppCore.hideBootStatus();
+	const stored = await getStorage('alist_config');
+	let savedConfig = stored && !Array.isArray(stored) ? stored : null;
+
+	while (true) {
+		const config = await AppCore.requestAListConfig(savedConfig);
+		savedConfig = {
+			baseUrl: config.baseUrl,
+			musicPath: config.musicPath,
+			username: config.username
+		};
+		toggleLoading(true);
 		try {
-			const singerFile = `${alist[1]}/search.json`
-			const {
-				data
-			} = await AList.getFileInfo(singerFile)
-			if (data && data.raw_url) {
-				const res = await AList.getRawFile(singerFile, {
-					sign: data.sign,
-					alist_ts: Date.now()
-				})
-				if (res && res.singers && res.singers.length) {
-					window.singers = res.singers
-					setStorage(singerCacheKey, singers)
+			window.alist = [config.baseUrl, config.musicPath, config.username, config.password];
+			await setStorage('alist_config', savedConfig);
+			window.AListUrl = config.baseUrl;
+			const musicListCacheKey = getAListScopeKey('alist_MusicList');
+			const singerCacheKey = getAListScopeKey('alist_options');
+			window.request = axios.create({ baseURL: AListUrl });
+			let reloginPromise = null;
+			const shouldRelogin = requestConfig => requestConfig && !requestConfig._skipAListRelogin && !requestConfig._alistRetried && !String(requestConfig.url || '').includes('/api/auth/login');
+			request.interceptors.response.use(
+				async response => {
+					const data = response.data;
+					if (data && data.code === 401 && shouldRelogin(response.config)) {
+						response.config._alistRetried = true;
+						const token = await relogin();
+						if (token) {
+							response.config.headers = response.config.headers || {};
+							response.config.headers.Authorization = token;
+							return request(response.config);
+						}
+					}
+					return data;
+				},
+				async error => {
+					const status = error && error.response && error.response.status;
+					if (status === 401 && shouldRelogin(error.config)) {
+						error.config._alistRetried = true;
+						const token = await relogin();
+						if (token) {
+							error.config.headers = error.config.headers || {};
+							error.config.headers.Authorization = token;
+							return request(error.config);
+						}
+					}
+					return Promise.reject(error);
+				}
+			);
+			window.relogin = function() {
+				if (reloginPromise) return reloginPromise;
+				reloginPromise = AList.getApiToken().then(token => {
+					if (!token) return null;
+					window.alistToken = token;
+					request.defaults.headers.Authorization = token;
+					return token;
+				}).catch(error => {
+					console.warn('AList 重新登录失败', error);
+					return null;
+				}).finally(() => {
+					reloginPromise = null;
+				});
+				return reloginPromise;
+			};
+			const token = await AList.getApiToken();
+			if (!token) throw new Error('登录失败，请检查 AList 地址、用户名和密码');
+			window.alistToken = token;
+			request.defaults.headers.Authorization = token;
+
+			window.musicList = await getStorage(musicListCacheKey);
+			if (!musicList) {
+				const songs = await AList.listAllSong(alist[1]);
+				if (!songs || !songs.length) throw new Error('没有找到可播放歌曲，请检查音乐路径和目录权限');
+				handleSongs(songs);
+				musicList = songs.filter(item => item.m);
+				await setStorage(musicListCacheKey, musicList);
+			}
+			withVueApp(app => {
+				app.searchResults = musicList;
+			});
+
+			window.singers = await getStorage(singerCacheKey);
+			if (!singers) {
+				try {
+					const singerFile = `${alist[1]}/search.json`;
+					const { data } = await AList.getFileInfo(singerFile);
+					if (data && data.raw_url) {
+						const response = await AList.getRawFile(singerFile, {
+							sign: data.sign,
+							alist_ts: Date.now()
+						});
+						if (response && response.singers && response.singers.length) {
+							window.singers = response.singers;
+							await setStorage(singerCacheKey, singers);
+						}
+					}
+				} catch (error) {
+					console.warn('获取歌手列表失败:', error);
 				}
 			}
-		} catch (e) {
-			console.warn('获取歌手列表失败:', e);
+			if (singers && singers.length) {
+				withVueApp(app => {
+					app.options = [{ k: '全部歌手', v: '' }].concat(singers.map(value => ({ k: value, v: value })));
+					app.selectedSource = '';
+				});
+			}
+			toggleLoading();
+			break;
+		} catch (error) {
+			console.error('AList 初始化失败', error);
+			const message = error && error.message ? error.message : 'AList 初始化失败，请检查配置后重试';
+			toggleLoading();
+			showNotification(message, 'error', 6);
+			AppCore.reopenAListConfig(message);
 		}
 	}
-	if (singers && singers.length) {
-		withVueApp(app => {
-			app.options = [{
-				k: '全部歌手',
-				v: ''
-			}].concat(singers.map(x => ({
-				k: x,
-				v: x
-			})))
-app.selectedSource = ''
-			})
-		}
-		} finally {
-			toggleLoading();
-		}
-	})()
+})();
 	if (isAList) {
 	window.cacheKey = {
 		lyricHistory: 'alist_lyricHistory',
@@ -263,6 +208,8 @@ app.selectedSource = ''
 		fontSize: 'dm_fontSize',
 		currInd: 'alist_currInd',
 		currTime: 'alist_currTime',
+		playbackSongKey: 'alist_playbackSongKey',
+		playbackState: 'alist_playbackState',
 	}
 	window.songAssetCache = window.songAssetCache || {
 		lyric: {},
@@ -274,20 +221,23 @@ app.selectedSource = ''
 	}
 	window.getSongUrl = async function(song, br) {
 		try {
-			// 401/403 已由 axios 拦截器统一重登并重试
-			const res = await AList.getFileInfo(`${song.path}/${song.name}`);
-			const info = (res && res.data) || {};
+			const response = await AList.getFileInfo(`${song.path}/${song.name}`);
+			const info = (response && response.data) || {};
 			let url = info.raw_url || null;
-			// AList 未配置直链(raw_url 为空)时，使用签名下载链接 /p{path}?sign=
-			if (!url && info && info.sign) {
+			// HTTPS 页面不能直接加载 HTTP 直链；有签名时优先走 AList 同源代理。
+			if (url && location.protocol === 'https:' && /^http:/.test(url) && info.sign) {
+				url = `${AListUrl}/p${encodePathSegments(song.path)}/${encodeURIComponent(song.name)}?sign=${encodeURIComponent(info.sign)}&alist_ts=${Date.now()}`;
+			}
+			// raw_url 为空时，仍按旧版回退到签名代理地址。
+			if (!url && info.sign) {
 				url = `${AListUrl}/p${encodePathSegments(song.path)}/${encodeURIComponent(song.name)}?sign=${encodeURIComponent(info.sign)}&alist_ts=${Date.now()}`;
 			}
 			if (url && location.protocol === 'https:' && /^http:/.test(url)) {
 				url = url.replace(/^http:/, 'https:');
 			}
 			return url;
-		} catch (e) {
-			console.debug(e);
+		} catch (error) {
+			console.warn('获取 AList 音乐链接失败:', error);
 			return null;
 		}
 	}
@@ -445,8 +395,9 @@ app.selectedSource = ''
 	window.resetAlist = async function() {
 		if (!confirm('确定要重置Alist配置吗？')) return;
 		// 同时清理 scoped token 与曲库/歌手缓存，避免旧 token 残留导致静默失败
+		window.alistToken = null;
+		delete request.defaults.headers.Authorization;
 		setStorage('alist_config', null)
-		setStorageExp(getAListScopeKey('alist_token'), null)
 		setStorage(getAListScopeKey('alist_MusicList'), null)
 		setStorage(getAListScopeKey('alist_options'), null)
 		location.reload()
