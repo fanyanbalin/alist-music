@@ -1546,6 +1546,12 @@ html.lyric-full-open body {
 }
 
 .lyrics-section.full .lyric-line {
+	-webkit-appearance: none;
+	appearance: none;
+	display: block;
+	flex: 0 0 auto;
+	min-height: 1.48em;
+	border: 0;
 	padding: clamp(8px, 1.05vh, 13px) clamp(14px, 1.6vw, 26px);
 	font-size: 0.88em;
 	opacity: 0.68;
@@ -1575,6 +1581,21 @@ html.lyric-full-open body {
 
 .lyrics-section.lyric-switching .lyrics-container {
 	scroll-behavior: auto;
+}
+
+.lyrics-section.full .lyric-line:disabled {
+	opacity: 0.56;
+	color: rgba(255, 255, 255, 0.84);
+	-webkit-text-fill-color: rgba(255, 255, 255, 0.84);
+	background: transparent;
+	cursor: default;
+}
+
+.lyrics-section.full .lyric-line.active:disabled {
+	opacity: 1;
+	color: #fff;
+	-webkit-text-fill-color: #fff;
+	background: rgba(255, 255, 255, 0.1);
 }
 
 .lyrics-section.full .lyric-line:hover {

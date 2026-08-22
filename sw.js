@@ -1,12 +1,12 @@
-const CACHE_VERSION = 'alist-music-static-v9';
+const CACHE_VERSION = 'alist-music-static-v10';
 const STATIC_ASSETS = [
 	'./',
 	'./index.html',
-	'./style.css?t=9',
-	'./app-core.js?t=9',
-	'./utils.js?t=9',
-	'./alist.js?t=9',
-	'./app.js?t=9',
+	'./style.css?t=10',
+	'./app-core.js?t=10',
+	'./utils.js?t=10',
+	'./alist.js?t=10',
+	'./app.js?t=10',
 	'./manifest.json',
 	'./favicon.ico',
 	'./icon-192.png',
