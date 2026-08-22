@@ -1527,8 +1527,6 @@ html.lyric-full-open body {
 	overflow-y: auto;
 	padding: clamp(12px, 2vh, 24px) clamp(8px, 1vw, 18px);
 	margin: 0;
-	mask-image: linear-gradient(to bottom, transparent, black 9%, black 90%, transparent);
-	-webkit-mask-image: linear-gradient(to bottom, transparent, black 9%, black 90%, transparent);
 	text-align: center;
 	max-width: 100%;
 	display: flex;
