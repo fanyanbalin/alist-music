@@ -57,6 +57,52 @@
 		throw new Error('下载链接必须使用 HTTP 或 HTTPS');
 	}
 
+	function isPrivateHost(hostname) {
+		const host = String(hostname || '').toLowerCase();
+		if (isLocalHost(host)) return true;
+		if (/^10\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host)) return true;
+		const match = host.match(/^172\.(\d+)\./);
+		return Boolean(match && Number(match[1]) >= 16 && Number(match[1]) <= 31);
+	}
+
+	function buildAListProxyUrl(baseUrl, filePath, sign, now) {
+		if (!sign) return null;
+		const path = normalizeMusicPath(filePath).split('/').map(segment => encodeURIComponent(segment)).join('/');
+		return `${normalizeAListBaseUrl(baseUrl)}/p${path}?sign=${encodeURIComponent(sign)}&alist_ts=${Number(now) || Date.now()}`;
+	}
+
+	function rewriteAListProxyOrigin(rawUrl, baseUrl) {
+		const raw = new URL(rawUrl);
+		const proxyIndex = raw.pathname.indexOf('/p/');
+		if (proxyIndex === -1) return null;
+		const base = normalizeAListBaseUrl(baseUrl);
+		return `${base}${raw.pathname.slice(proxyIndex)}${raw.search}`;
+	}
+
+	function resolveAListMediaUrl(info, options = {}) {
+		const data = info && typeof info === 'object' ? info : {};
+		const rawUrl = data.raw_url ? sanitizeDownloadUrl(data.raw_url) : null;
+		const signedProxyUrl = buildAListProxyUrl(options.baseUrl, options.filePath, data.sign, options.now);
+		if (options.pageProtocol !== 'https:') {
+			if (rawUrl) return rawUrl;
+			if (signedProxyUrl) return signedProxyUrl;
+			throw new Error('AList 未返回可用的音频地址');
+		}
+
+		if (rawUrl) {
+			const raw = new URL(rawUrl);
+			if (raw.protocol === 'https:' && !isPrivateHost(raw.hostname)) return rawUrl;
+			if (signedProxyUrl) return signedProxyUrl;
+			const rewrittenProxyUrl = rewriteAListProxyOrigin(rawUrl, options.baseUrl);
+			if (rewrittenProxyUrl) return rewrittenProxyUrl;
+			if (raw.protocol === 'http:') {
+				throw new Error('AList 返回了仅支持 HTTP 的存储直链；请启用 AList Web 代理或为存储直链配置 HTTPS');
+			}
+		}
+		if (signedProxyUrl) return signedProxyUrl;
+		throw new Error('AList 未返回可供 HTTPS 页面播放的音频地址');
+	}
+
 	async function mapWithConcurrency(items, limit, mapper) {
 		const results = new Array(items.length);
 		let nextIndex = 0;
@@ -231,6 +277,7 @@
 		parseLrc,
 		requestAListConfig,
 		reopenAListConfig,
+		resolveAListMediaUrl,
 		sanitizeDownloadUrl,
 		scanAListTree,
 		showBootError,

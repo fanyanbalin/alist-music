@@ -234,24 +234,17 @@ window.isAList = true;
 	if (isAList) {
 	window.getSongUrl = async function(song) {
 		try {
-			const response = await AList.getFileInfo(`${song.path}/${song.name}`);
-			const info = (response && response.data) || {};
-			let url = info.raw_url || null;
-			// HTTPS 页面不能直接加载 HTTP 直链；有签名时优先走 AList 同源代理。
-			if (url && location.protocol === 'https:' && /^http:/.test(url) && info.sign) {
-				url = `${AListUrl}/p${encodePathSegments(song.path)}/${encodeURIComponent(song.name)}?sign=${encodeURIComponent(info.sign)}&alist_ts=${Date.now()}`;
-			}
-			// raw_url 为空时，仍按旧版回退到签名代理地址。
-			if (!url && info.sign) {
-				url = `${AListUrl}/p${encodePathSegments(song.path)}/${encodeURIComponent(song.name)}?sign=${encodeURIComponent(info.sign)}&alist_ts=${Date.now()}`;
-			}
-			if (url && location.protocol === 'https:' && /^http:/.test(url)) {
-				url = url.replace(/^http:/, 'https:');
-			}
-			return url;
+			const filePath = `${song.path}/${song.name}`.replace(/\/{2,}/g, '/');
+			const response = await AList.getFileInfo(filePath);
+			return AppCore.resolveAListMediaUrl((response && response.data) || {}, {
+				baseUrl: AListUrl,
+				filePath,
+				pageProtocol: location.protocol,
+				now: Date.now()
+			});
 		} catch (error) {
 			console.warn('获取 AList 音乐链接失败:', error);
-			return null;
+			throw error;
 		}
 	}
 	// 仅获取 AList 本地 LRC 歌词；网易云在线歌词由 loadLyrics 直接调用 getNetEaseSearch/getNetEaseLyric

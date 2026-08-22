@@ -348,45 +348,43 @@ window.__maybeStartAListMusic = function() {
 				this.currentTime = audio.currentTime;
 				this.updateLyricHighlight();
 			},
-						handleAudioError(e) {
-							const activeMedia = this._activeMedia;
-							const eventSrc = e && e.currentTarget && (e.currentTarget.currentSrc || e.currentTarget.src);
-							if (!activeMedia || activeMedia.playToken !== this._playSongToken || activeMedia.key !== this.currentSong.key) return;
-							if (eventSrc && eventSrc !== activeMedia.src) return;
-							console.error('Audio error:', e);
-							const error = this.$refs.audioPlayer.error;
-							let msg = '播放出错';
-							const errorCode = error && error.code;
-							if (errorCode === MediaError.MEDIA_ERR_ABORTED) {
-								// ABORTED 通常是切歌触发，不重置 isPlaying（避免与新歌 play 事件竞态）
-								return;
-							} else if (errorCode === MediaError.MEDIA_ERR_NETWORK) {
-								msg = '网络错误，链接可能已过期，尝试重新获取...';
-							} else if (errorCode === MediaError.MEDIA_ERR_DECODE) {
-								msg = '音频解码错误';
-							} else if (errorCode === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
-								msg = '链接已过期，尝试重新获取...';
-							}
-							// 网络错误或链接过期(含403/NotSupportedError)时重载，最多重试2次
-							const shouldRetry = (errorCode === MediaError.MEDIA_ERR_NETWORK || errorCode === MediaError.MEDIA_ERR_DECODE || errorCode === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED);
-							if (shouldRetry && this.currentSong && this.currentSong.key) {
-								const retryKey = activeMedia.key;
-								this._audioErrorRetry ||= {};
-								this._audioErrorRetry[retryKey] = (this._audioErrorRetry[retryKey] || 0) + 1;
-								if (this._audioErrorRetry[retryKey] > 2) {
-									this._audioErrorRetry[retryKey] = 0;
-									msg = '多次重试失败，请手动刷新';
-									this.showNotification(msg, 'error', 5);
-									this.isPlaying = false;
-									return;
-								}
+					handleAudioPlay() {
+						this.isPlaying = true;
+						if (this.currentSong && this.currentSong.key && this._audioErrorRetry) {
+							this._audioErrorRetry[this.currentSong.key] = 0;
+						}
+					},
+					handleAudioError(e) {
+						const activeMedia = this._activeMedia;
+						const eventSrc = e && e.currentTarget && (e.currentTarget.currentSrc || e.currentTarget.src);
+						if (!activeMedia || activeMedia.playToken !== this._playSongToken || activeMedia.key !== this.currentSong.key) return;
+						if (eventSrc && eventSrc !== activeMedia.src) return;
+						const error = this.$refs.audioPlayer.error;
+						const errorCode = error && error.code;
+						if (errorCode === MediaError.MEDIA_ERR_ABORTED) return;
+						let msg = '播放出错';
+						if (errorCode === MediaError.MEDIA_ERR_NETWORK) msg = '音频网络请求失败，正在重新获取地址...';
+						else if (errorCode === MediaError.MEDIA_ERR_DECODE) msg = '音频解码失败，正在重新获取地址...';
+						else if (errorCode === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) msg = '音频响应不是浏览器支持的媒体，正在重新获取地址...';
+						const shouldRetry = errorCode === MediaError.MEDIA_ERR_NETWORK
+							|| errorCode === MediaError.MEDIA_ERR_DECODE
+							|| errorCode === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED;
+						if (shouldRetry && this.currentSong && this.currentSong.key) {
+							const retryKey = activeMedia.key;
+							this._audioErrorRetry ||= {};
+							this._audioErrorRetry[retryKey] = (this._audioErrorRetry[retryKey] || 0) + 1;
+							if (this._audioErrorRetry[retryKey] <= 2) {
 								this.showNotification(`${msg}（第${this._audioErrorRetry[retryKey]}次）`, 'warning', 4);
 								this.reloadCurrentSong(true, true);
 								return;
 							}
-							this.showNotification(msg, 'error');
-							this.isPlaying = false;
-						},
+						}
+						this.stopPlaybackWithError(new Error(
+							errorCode === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED
+								? '音频源不可播放。请确认 AList 公网地址使用 HTTPS，并为该存储启用 Web 代理或提供可公开播放的 HTTPS 直链'
+								: msg
+						));
+					},
 					handleEnded(e) {
 						const audio = this.$refs.audioPlayer;
 						const eventSrc = e && e.currentTarget && (e.currentTarget.currentSrc || e.currentTarget.src);
@@ -630,15 +628,18 @@ window.__maybeStartAListMusic = function() {
 							const songUrl = await getSongUrl(song);
 							if (this._playSongToken !== playToken || this.currentSong.key !== key) return;
 							if (!songUrl) {
-								// URL 获取失败：不自动跳过，避免集体失败时整表循环跳过
 								this._lyricLoadToken = (this._lyricLoadToken || 0) + 1;
-								return this._autoSkipToNext();
+								return this.stopPlaybackWithError(new Error('AList 未返回可用的音频地址'));
 							}
-							this.$refs.audioPlayer.src = songUrl;
+							const audio = this.$refs.audioPlayer;
+							audio.pause();
+							audio.removeAttribute('src');
+							audio.load();
+							audio.src = songUrl;
 							this._activeMedia = {
 								playToken,
 								key,
-								src: this.$refs.audioPlayer.src
+								src: audio.src
 							};
 							this.endingSong = false;
 							this.historyTime = time
@@ -658,32 +659,35 @@ window.__maybeStartAListMusic = function() {
 							if ((!this.historyTime || forcePlay) && !suppressAutoPlay) this.$refs.audioPlayer.play().then(() => {
 								if (this._playSongToken !== playToken || this.currentSong.key !== key) return;
 								this.showNotification(`开始播放 ${artistText} · ${displayInfo.title}`, 'success');
-							}).catch((e) => {
+							}).catch((error) => {
 								if (this._playSongToken !== playToken || this.currentSong.key !== key) return;
-								console.error('play error', e);
+								if (error && error.name === 'NotAllowedError') {
+									this.showNotification('浏览器阻止了自动播放，请再次点击播放按钮', 'warning', 5);
+									return;
+								}
+								if (!this.$refs.audioPlayer.error) this.stopPlaybackWithError(error);
 							});
 						} catch (error) {
 							if (this._playSongToken !== playToken || this.currentSong.key !== key) return;
-							console.error('playSong error:', error);
 							this._lyricLoadToken = (this._lyricLoadToken || 0) + 1;
-							return this._autoSkipToNext();
+							return this.stopPlaybackWithError(error);
 						}
 					},
-					// AList 歌曲获取链接失败：不自动跳过，避免集体失败时整表循环跳过，直接停止播放并提示
-					_autoSkipToNext() {
+					stopPlaybackWithError(error) {
 						this.isPlaying = false;
 						this.endingSong = false;
 						this._pendingResume = null;
+						this._activeMedia = null;
 						if (this.$refs.audioPlayer) {
-							// 清空残留的旧歌曲 src，避免"播放错位"（UI 显示新歌却在播旧歌）与结束事件卡死
 							this.$refs.audioPlayer.pause();
 							this.$refs.audioPlayer.removeAttribute('src');
 							this.$refs.audioPlayer.load();
 						}
 						const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
-						return this.showNotification(
-							offline ? '网络不可用，已停止播放，请检查网络连接' : '无法获取音乐链接，已停止播放，请检查网络或AList配置',
-							'error');
+						const message = offline
+							? '网络不可用，已停止播放，请检查网络连接'
+							: (error && error.message ? error.message : '无法加载音频，请检查 AList 公网访问和存储代理配置');
+						return this.showNotification(message, 'error', 8);
 					},
 					toggleMode() {
 						this.playMode = this.playMode === 'loop' ? 'random' : this.playMode === 'random' ? 'one' :
@@ -708,10 +712,12 @@ window.__maybeStartAListMusic = function() {
 								this.$refs.audioPlayer.currentTime = this.historyTime;
 								this.historyTime = null;
 							}
-							this.$refs.audioPlayer.play().catch((e) => {
-								// 播放被拒（如自动播放策略/资源加载失败）时给出反馈
-								console.error('play error', e);
-								this.showNotification('播放失败，请尝试重新加载', 'error');
+							this.$refs.audioPlayer.play().catch((error) => {
+								if (error && error.name === 'NotAllowedError') {
+									this.showNotification('浏览器阻止了播放，请再次点击播放按钮', 'warning', 5);
+									return;
+								}
+								if (!this.$refs.audioPlayer.error) this.stopPlaybackWithError(error);
 							});
 						}
 					},
@@ -966,12 +972,12 @@ window.__maybeStartAListMusic = function() {
 						try {
 							this.showNotification('正在准备音乐文件...', 'info');
 
-							let songUrl = AppCore.sanitizeDownloadUrl(await getSongUrl(song));
+							const songUrl = AppCore.sanitizeDownloadUrl(await getSongUrl(song));
 							if (!songUrl) {
 								return this.showNotification('未获取到下载地址，请检查网络或 AList 配置', 'error');
 							}
 							if (location.protocol === 'https:' && /^http:/.test(songUrl)) {
-								songUrl = songUrl.replace(/^http:/, 'https:');
+								return this.showNotification('下载地址仅支持 HTTP，请在 AList 中启用 Web 代理或配置 HTTPS 直链', 'error', 8);
 							}
 							const dlInfo = this.parseSongDisplayInfo(song);
 							const extension = AppCore.getFileExtension(song.name) || '.mp3';
@@ -1232,7 +1238,7 @@ if (window.__aListMusicDepsReady && window.__aListMusicScopeReady) window.__mayb
 
 if (/^(https?:)$/.test(location.protocol) && 'serviceWorker' in navigator) {
 	window.addEventListener('load', () => {
-		navigator.serviceWorker.register('./sw.js?t=5')
+		navigator.serviceWorker.register('./sw.js?t=7')
 			.then(function(registration) {
 				registration.update().catch(() => {});
 			})
