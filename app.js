@@ -348,45 +348,45 @@ window.__maybeStartAListMusic = function() {
 				this.currentTime = audio.currentTime;
 				this.updateLyricHighlight();
 			},
-					handleAudioError(e) {
-						const activeMedia = this._activeMedia;
-						const eventSrc = e && e.currentTarget && (e.currentTarget.currentSrc || e.currentTarget.src);
-						if (!activeMedia || activeMedia.playToken !== this._playSongToken || activeMedia.key !== this.currentSong.key) return;
-						if (eventSrc && eventSrc !== activeMedia.src) return;
-						console.error('Audio error:', e);
-						const error = this.$refs.audioPlayer.error;
-						let msg = '播放出错';
-						const errorCode = error && error.code;
-						if (errorCode === MediaError.MEDIA_ERR_ABORTED) {
-							// ABORTED 通常是切歌触发，不重置 isPlaying（避免与新歌 play 事件竞态）
-							return;
-						} else if (errorCode === MediaError.MEDIA_ERR_NETWORK) {
-							msg = '网络错误，链接可能已过期，尝试重新获取...';
-						} else if (errorCode === MediaError.MEDIA_ERR_DECODE) {
-							msg = '音频解码错误';
-						} else if (errorCode === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
-							msg = '链接已过期，尝试重新获取...';
-						}
-						// 网络错误或链接过期(含403/NotSupportedError)时重载，最多重试2次
-						const shouldRetry = (errorCode === MediaError.MEDIA_ERR_NETWORK || errorCode === MediaError.MEDIA_ERR_DECODE || errorCode === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED);
-						if (shouldRetry && this.currentSong && this.currentSong.key) {
-																			const retryKey = activeMedia.key;
-				this._audioErrorRetry ||= {};
-				this._audioErrorRetry[retryKey] = (this._audioErrorRetry[retryKey] || 0) + 1;
-							if (this._audioErrorRetry[retryKey] > 2) {
-								this._audioErrorRetry[retryKey] = 0;
-								msg = '多次重试失败，请手动刷新';
-								this.showNotification(msg, 'error', 5);
-								this.isPlaying = false;
+						handleAudioError(e) {
+							const activeMedia = this._activeMedia;
+							const eventSrc = e && e.currentTarget && (e.currentTarget.currentSrc || e.currentTarget.src);
+							if (!activeMedia || activeMedia.playToken !== this._playSongToken || activeMedia.key !== this.currentSong.key) return;
+							if (eventSrc && eventSrc !== activeMedia.src) return;
+							console.error('Audio error:', e);
+							const error = this.$refs.audioPlayer.error;
+							let msg = '播放出错';
+							const errorCode = error && error.code;
+							if (errorCode === MediaError.MEDIA_ERR_ABORTED) {
+								// ABORTED 通常是切歌触发，不重置 isPlaying（避免与新歌 play 事件竞态）
+								return;
+							} else if (errorCode === MediaError.MEDIA_ERR_NETWORK) {
+								msg = '网络错误，链接可能已过期，尝试重新获取...';
+							} else if (errorCode === MediaError.MEDIA_ERR_DECODE) {
+								msg = '音频解码错误';
+							} else if (errorCode === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
+								msg = '链接已过期，尝试重新获取...';
+							}
+							// 网络错误或链接过期(含403/NotSupportedError)时重载，最多重试2次
+							const shouldRetry = (errorCode === MediaError.MEDIA_ERR_NETWORK || errorCode === MediaError.MEDIA_ERR_DECODE || errorCode === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED);
+							if (shouldRetry && this.currentSong && this.currentSong.key) {
+								const retryKey = activeMedia.key;
+								this._audioErrorRetry ||= {};
+								this._audioErrorRetry[retryKey] = (this._audioErrorRetry[retryKey] || 0) + 1;
+								if (this._audioErrorRetry[retryKey] > 2) {
+									this._audioErrorRetry[retryKey] = 0;
+									msg = '多次重试失败，请手动刷新';
+									this.showNotification(msg, 'error', 5);
+									this.isPlaying = false;
+									return;
+								}
+								this.showNotification(`${msg}（第${this._audioErrorRetry[retryKey]}次）`, 'warning', 4);
+								this.reloadCurrentSong(true, true);
 								return;
 							}
-							this.showNotification(`${msg}（第${this._audioErrorRetry[retryKey]}次）`, 'warning', 4);
-							this.reloadCurrentSong(true, true);
-							return;
-						}
-						this.showNotification(msg, 'error');
-						this.isPlaying = false;
-					},
+							this.showNotification(msg, 'error');
+							this.isPlaying = false;
+						},
 					handleEnded(e) {
 						const audio = this.$refs.audioPlayer;
 						const eventSrc = e && e.currentTarget && (e.currentTarget.currentSrc || e.currentTarget.src);
