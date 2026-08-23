@@ -27,9 +27,12 @@ window.__maybeStartAListMusic = function() {
 						lyrics: [],
 						currentLyricIndex: -1,
 						lyricFontSize: (() => {
+							const defaultFontSize = window.innerWidth < 800 ? 16 : 44;
 							const savedFontSize = Number(getStorageExp(cacheKey.fontSize));
-							if (window.innerWidth < 800) return !Number.isFinite(savedFontSize) || savedFontSize === 18 ? 16 : Math.min(savedFontSize, 52);
-							return Math.min(!Number.isFinite(savedFontSize) || savedFontSize === 46 ? 44 : savedFontSize, 52);
+							if (!Number.isFinite(savedFontSize) || savedFontSize < 14 || savedFontSize > 72) return defaultFontSize;
+							if (window.innerWidth < 800 && savedFontSize === 18) return 16;
+							if (window.innerWidth >= 800 && savedFontSize === 46) return 44;
+							return savedFontSize;
 						})(),
 						lyricsEnd: null,
 						lyricLock: true,
@@ -60,7 +63,11 @@ window.__maybeStartAListMusic = function() {
 						return 'cursor fas fa-volume-up volume-icon';
 					},
 					lyricSectionStyle() {
-						const base = { 'font-size': (this.lyricFull ? this.lyricFontSize : 16) + 'px' };
+						const savedSize = Number(this.lyricFontSize);
+						const fullSize = Number.isFinite(savedSize) && savedSize >= 14 && savedSize <= 72
+							? savedSize
+							: (window.innerWidth < 800 ? 16 : 44);
+						const base = { 'font-size': (this.lyricFull ? fullSize : 16) + 'px' };
 						if (!this.lyricFull) return base;
 						return Object.assign(base, this.fullSectionBgStyle);
 					},
@@ -1341,7 +1348,7 @@ if (window.__aListMusicDepsReady && window.__aListMusicScopeReady) window.__mayb
 
 if (/^(https?:)$/.test(location.protocol) && 'serviceWorker' in navigator) {
 	window.addEventListener('load', () => {
-			navigator.serviceWorker.register('./sw.js?t=13')
+			navigator.serviceWorker.register('./sw.js?t=1')
 			.then(function(registration) {
 				registration.update().catch(() => {});
 			})
