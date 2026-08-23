@@ -27,11 +27,11 @@ window.__maybeStartAListMusic = function() {
 						lyrics: [],
 						currentLyricIndex: -1,
 						lyricFontSize: (() => {
-							const defaultFontSize = window.innerWidth < 800 ? 16 : 44;
+							const defaultFontSize = window.innerWidth < 800 ? 16 : 48;
 							const savedFontSize = Number(getStorageExp(cacheKey.fontSize));
 							if (!Number.isFinite(savedFontSize) || savedFontSize < 14 || savedFontSize > 72) return defaultFontSize;
 							if (window.innerWidth < 800 && savedFontSize === 18) return 16;
-							if (window.innerWidth >= 800 && savedFontSize === 46) return 44;
+							if (window.innerWidth >= 800 && savedFontSize === 46) return 48;
 							return savedFontSize;
 						})(),
 						lyricsEnd: null,
@@ -66,7 +66,7 @@ window.__maybeStartAListMusic = function() {
 						const savedSize = Number(this.lyricFontSize);
 						const fullSize = Number.isFinite(savedSize) && savedSize >= 14 && savedSize <= 72
 							? savedSize
-							: (window.innerWidth < 800 ? 16 : 44);
+							: (window.innerWidth < 800 ? 16 : 48);
 						const base = { 'font-size': (this.lyricFull ? fullSize : 16) + 'px' };
 						if (!this.lyricFull) return base;
 						return Object.assign(base, this.fullSectionBgStyle);

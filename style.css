@@ -1600,7 +1600,7 @@ html.lyric-full-open body {
 	min-height: 1.48em;
 	border: 0;
 	padding: clamp(8px, 1.05vh, 13px) clamp(14px, 1.6vw, 26px);
-	font-size: 0.88em;
+	font-size: 1em;
 	opacity: 0.68;
 	margin-bottom: 3px;
 	text-shadow: 0 6px 18px rgba(0, 0, 0, 0.42);
@@ -1662,7 +1662,7 @@ html.lyric-full-open body {
 
 .lyrics-section.full .lyric-line.active {
 	opacity: 1;
-	font-size: 1.1em;
+	font-size: 1.14em;
 	color: #fff;
 	font-weight: 700;
 	width: 94%;
