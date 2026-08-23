@@ -15,16 +15,16 @@
 		<style>[v-cloak]{display:none !important;}</style>
 		<link rel="apple-touch-icon" href="favicon.ico" />
 		<link rel="stylesheet" href="vendor/fontawesome.min.css">
-		<link rel="stylesheet" href="style.css?t=12">
+		<link rel="stylesheet" href="style.css?t=13">
 		<script defer src="vendor/vue.global.prod.js"></script>
 		<script defer src="vendor/pako.min.js"></script>
 		<script defer src="vendor/localforage.min.js"></script>
 		<script defer src="vendor/axios.min.js"></script>
 		<script defer src="vendor/md5.min.js"></script>
-		<script defer src="app-core.js?t=12"></script>
-		<script defer src="utils.js?t=12"></script>
-		<script defer src="alist.js?t=12"></script>
-		<script defer src="app.js?t=12"></script>
+		<script defer src="app-core.js?t=13"></script>
+		<script defer src="utils.js?t=13"></script>
+		<script defer src="alist.js?t=13"></script>
+		<script defer src="app.js?t=13"></script>
 
 	</head>
 	<body>
@@ -273,10 +273,13 @@
 										<i class="fas fa-spinner fa-pulse"></i>
 										<span>{{ lyricLoadingMsg || '正在获取歌词...' }}</span>
 									</div>
-																												<button type="button" v-for="(lyric, index) in lyrics" :key="index" class="lyric-line"
+																				<div v-for="(lyric, index) in lyrics" :key="index" class="lyric-line"
 											:class="{ active: currentLyricIndex === index, cursor: !lyricLock }"
-											:aria-disabled="lyricLock ? 'true' : 'false'" :tabindex="lyricLock ? -1 : 0"
-											@click="!lyricLock && seekToLyric(lyric.time)">{{ lyric.text }}</button>
+											:aria-disabled="lyricLock ? 'true' : 'false'" :role="lyricLock ? undefined : 'button'"
+											:tabindex="lyricLock ? -1 : 0"
+											@click="!lyricLock && seekToLyric(lyric.time)"
+											@keydown.enter.prevent="!lyricLock && seekToLyric(lyric.time)"
+											@keydown.space.prevent="!lyricLock && seekToLyric(lyric.time)">{{ lyric.text }}</div>
 								</div>
 							</div>
 						</div>

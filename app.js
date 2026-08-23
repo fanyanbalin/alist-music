@@ -1341,7 +1341,7 @@ if (window.__aListMusicDepsReady && window.__aListMusicScopeReady) window.__mayb
 
 if (/^(https?:)$/.test(location.protocol) && 'serviceWorker' in navigator) {
 	window.addEventListener('load', () => {
-			navigator.serviceWorker.register('./sw.js?t=12')
+			navigator.serviceWorker.register('./sw.js?t=13')
 			.then(function(registration) {
 				registration.update().catch(() => {});
 			})
