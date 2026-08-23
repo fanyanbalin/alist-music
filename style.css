@@ -1630,7 +1630,7 @@ html.lyric-full-open body {
 	scroll-behavior: auto;
 }
 
-.lyrics-section.full .lyric-line:disabled {
+.lyrics-section.full .lyric-line[aria-disabled="true"] {
 	opacity: 0.56;
 	color: rgba(255, 255, 255, 0.84);
 	-webkit-text-fill-color: rgba(255, 255, 255, 0.84);
@@ -1638,7 +1638,7 @@ html.lyric-full-open body {
 	cursor: default;
 }
 
-.lyrics-section.full .lyric-line.active:disabled {
+.lyrics-section.full .lyric-line.active[aria-disabled="true"] {
 	opacity: 1;
 	color: #fff;
 	-webkit-text-fill-color: #fff;
