@@ -48,6 +48,7 @@ window.__maybeStartAListMusic = function() {
 						lyricError: '',
 						_coverColorCache: {},
 						fullCoverColors: null,
+						fullCoverColorsSampled: false,
 						randomIndexes: [],
 						randomListKey: '',
 					};
@@ -111,7 +112,7 @@ window.__maybeStartAListMusic = function() {
 
 						// 从辅色衍生：弱光晕
 						const ahsl = rgb2hsl(a);
-						const aGlow = hsl2rgb({h: ahsl.h, s: Math.min(1, ahsl.s * 1.2), l: 0.35});
+								const aGlow = hsl2rgb({h: ahsl.h, s: Math.min(1, ahsl.s * 1.2), l: 0.35});
 
 						return {
 							'--full-accent': toRgba(vivid, 1),
@@ -238,60 +239,105 @@ window.__maybeStartAListMusic = function() {
 							};
 						}
 					},
-														_fetchCoverColors(url) {
-				const token = (this._coverColorToken = (this._coverColorToken || 0) + 1);
-							const isCurrent = () => this._coverColorToken === token && this.lyricFull && this.displayCoverUrl === url;
-							if (!url || url === albumSbgImg) {
-								this.fullCoverColors = null;
-								return;
-							}
-							if (this._coverColorCache[url]) {
-								if (isCurrent()) this.fullCoverColors = this._coverColorCache[url];
-								return;
-							}
+					_coverFallbackColors(url) {
+						let hash = 2166136261;
+						for (const char of String(url || '')) {
+							hash ^= char.charCodeAt(0);
+							hash = Math.imul(hash, 16777619);
+						}
+						const hue = (hash >>> 0) % 360;
+						const accentHue = (hue + 42 + ((hash >>> 8) % 56)) % 360;
+						const hslToRgb = (h, s, l) => {
+							const c = (1 - Math.abs(2 * l - 1)) * s;
+							const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+							const m = l - c / 2;
+							let r = 0, g = 0, b = 0;
+							if (h < 60) { r = c; g = x; }
+							else if (h < 120) { r = x; g = c; }
+							else if (h < 180) { g = c; b = x; }
+							else if (h < 240) { g = x; b = c; }
+							else if (h < 300) { r = x; b = c; }
+							else { r = c; b = x; }
+							return {
+								r: Math.round((r + m) * 255),
+								g: Math.round((g + m) * 255),
+								b: Math.round((b + m) * 255)
+							};
+						};
+						return {
+							dominant: hslToRgb(hue, 0.52, 0.38),
+							accent: hslToRgb(accentHue, 0.58, 0.43)
+						};
+					},
+					_fetchCoverColors(url) {
+						const token = (this._coverColorToken = (this._coverColorToken || 0) + 1);
+						const isCurrent = () => this._coverColorToken === token && this.lyricFull && this.displayCoverUrl === url;
+						if (!url || url === albumSbgImg) {
 							this.fullCoverColors = null;
-							const img = new Image();
-							img.crossOrigin = 'anonymous';
-							img.onload = () => {
-								try {
-									const canvas = document.createElement('canvas');
-									canvas.width = 60; canvas.height = 60;
-									const ctx = canvas.getContext('2d');
-									ctx.drawImage(img, 0, 0, 60, 60);
-									const data = ctx.getImageData(0, 0, 60, 60).data;
-									const half = 30;
-									const sample = (x0, y0, x1, y1) => {
-										let r = 0, g = 0, b = 0, count = 0;
-										for (let y = y0; y < y1; y++) {
-											for (let x = x0; x < x1; x++) {
-												const i = (y * 60 + x) * 4;
-												const pr = data[i], pg = data[i + 1], pb = data[i + 2];
-												const sum = pr + pg + pb;
-												if (sum < 50 || sum > 720) continue;
-												const maxC = Math.max(pr, pg, pb), minC = Math.min(pr, pg, pb);
-												const saturation = maxC > 0 ? (maxC - minC) / maxC : 0;
-												const w = 0.5 + saturation * 2;
-												r += pr * w; g += pg * w; b += pb * w; count += w;
-											}
+							this.fullCoverColorsSampled = false;
+							return;
+						}
+						const cached = this._coverColorCache[url];
+						if (cached) {
+							if (isCurrent()) {
+								this.fullCoverColors = cached.colors;
+								this.fullCoverColorsSampled = cached.sampled;
+							}
+							return;
+						}
+
+						const applyColors = (colors, sampled) => {
+							this._coverColorCache[url] = { colors, sampled };
+							if (!isCurrent()) return;
+							this.fullCoverColors = colors;
+							this.fullCoverColorsSampled = sampled;
+						};
+						applyColors(this._coverFallbackColors(url), false);
+
+						const img = new Image();
+						img.crossOrigin = 'anonymous';
+						img.onload = () => {
+							try {
+								const canvas = document.createElement('canvas');
+								canvas.width = 60;
+								canvas.height = 60;
+								const ctx = canvas.getContext('2d', { willReadFrequently: true });
+								if (!ctx) return;
+								ctx.drawImage(img, 0, 0, 60, 60);
+								const data = ctx.getImageData(0, 0, 60, 60).data;
+								const half = 30;
+								const sample = (x0, y0, x1, y1) => {
+									let r = 0, g = 0, b = 0, count = 0;
+									for (let y = y0; y < y1; y++) {
+										for (let x = x0; x < x1; x++) {
+											const i = (y * 60 + x) * 4;
+											const pr = data[i], pg = data[i + 1], pb = data[i + 2];
+											const sum = pr + pg + pb;
+											if (sum < 50 || sum > 720) continue;
+											const maxC = Math.max(pr, pg, pb), minC = Math.min(pr, pg, pb);
+											const saturation = maxC > 0 ? (maxC - minC) / maxC : 0;
+											const weight = 0.5 + saturation * 2;
+											r += pr * weight;
+											g += pg * weight;
+											b += pb * weight;
+											count += weight;
 										}
-										return count > 0 ? { r: Math.round(r / count), g: Math.round(g / count), b: Math.round(b / count) } : null;
-									};
-									const dominant = sample(0, 0, 60, half) || sample(0, 0, 60, 60);
-									const accent = sample(half, half, 60, 60) || sample(half, 0, 60, half);
-									if (dominant) {
-										const cols = { dominant, accent: accent || dominant };
-										this._coverColorCache[url] = cols;
-										if (isCurrent()) this.fullCoverColors = cols;
 									}
-																				} catch (error) {
-						this.fullCoverColors = null;
-					}
-				};
-				img.onerror = () => {
-					if (isCurrent()) this.fullCoverColors = null;
-				};
-				img.src = url;
-			},
+									return count > 0 ? {
+										r: Math.round(r / count),
+										g: Math.round(g / count),
+										b: Math.round(b / count)
+									} : null;
+								};
+								const dominant = sample(0, 0, 60, half) || sample(0, 0, 60, 60);
+								const accent = sample(half, half, 60, 60) || sample(half, 0, 60, half);
+								if (dominant) applyColors({ dominant, accent: accent || dominant }, true);
+							} catch (error) {
+								if (error && error.name !== 'SecurityError') console.warn('封面取色失败:', error);
+							}
+						};
+						img.src = url;
+					},
 					persistPlaybackState() {
 						if (!this.currentSong || !this.currentSong.key) return;
 						const audio = this.$refs.audioPlayer;
@@ -1295,11 +1341,7 @@ if (window.__aListMusicDepsReady && window.__aListMusicScopeReady) window.__mayb
 
 if (/^(https?:)$/.test(location.protocol) && 'serviceWorker' in navigator) {
 	window.addEventListener('load', () => {
-<<<<<<< HEAD
-		navigator.serviceWorker.register('./sw.js?t=12')
-=======
-		navigator.serviceWorker.register('./sw.js?t=10')
->>>>>>> parent of 8c061e1 (update)
+					navigator.serviceWorker.register('./sw.js?t=11')
 			.then(function(registration) {
 				registration.update().catch(() => {});
 			})
